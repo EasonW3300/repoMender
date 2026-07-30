@@ -1,0 +1,12 @@
+# Copy this file to an ignored local override such as
+# .env.github-compose.yaml, replace the source path, and set:
+#   COMPOSE_FILE=compose.yaml:.env.github-compose.yaml
+#
+# The referenced PEM file is sensitive and must remain outside Git.
+services:
+  api:
+    volumes:
+      - type: bind
+        source: /absolute/path/to/repomender-github-app.private-key.pem
+        target: /run/secrets/github-app-private-key.pem
+        read_only: true

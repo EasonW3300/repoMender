@@ -235,6 +235,17 @@ HTTPS origin.
 | `deploy/` | Local OIDC and SCM smoke-test fixtures |
 | `.github/workflows/` | Repository CI gates |
 
+## Continue on another computer
+
+For a complete non-secret environment handoff, follow
+[Home development handoff](docs/handoff/HOME-CONTINUATION.md). It lists the
+authoritative branch and gate state, files intentionally excluded from Git,
+steps to reconnect the GitHub App, the remaining M2 blocker, and the strict
+M3-M9 delivery workflow.
+
+The ready-to-paste [Codex continuation prompt](docs/handoff/CODEX-START-PROMPT.md)
+ensures a new Codex session reads repository evidence before continuing.
+
 ## License
 
 RepoMender is licensed under the GNU Affero General Public License v3.0 or
