@@ -1,0 +1,24 @@
+ARG NODE_IMAGE=node:24-alpine
+
+FROM ${NODE_IMAGE} AS dependencies
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM dependencies AS build
+
+COPY . .
+RUN npm run build
+
+FROM ${NODE_IMAGE}
+
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/vite.config.ts ./vite.config.ts
+COPY --from=build /app/worker ./worker
+EXPOSE 3000
+CMD ["npm", "run", "start", "--", "--host", "0.0.0.0"]
