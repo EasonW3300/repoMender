@@ -6,36 +6,75 @@ governed code review, CI diagnosis, and issue repair. It uses
 execution control plane and keeps repository policy, approvals, audit history,
 and business workflow state in RepoMender.
 
+## Product scope
+
+RepoMender is designed for engineering teams that need AI-assisted repository
+automation without giving an Agent unrestricted access to source control. Its
+target workflow is:
+
+```text
+SCM event
+  → verified and deduplicated webhook
+  → persistent task and run
+  → Agent Compose governed execution
+  → structured findings and evidence
+  → human approval where required
+  → GitHub/GitLab status, comment, or draft patch
+```
+
+The first release supports GitHub.com and GitLab.com in a self-hosted,
+single-tenant deployment. Codex is the mandatory Agent provider for acceptance.
+Automatic merge, direct writes to protected branches, multi-tenancy, billing,
+GHES, and GitLab Self-Managed are outside the first-release scope.
+
 ## Current delivery status
 
 The repository follows sequential MVP gates. Modules M0 and M1 provide the
 engineering foundation and identity boundary. M2 is implemented behind its
-feature flag and is awaiting its mandatory GitHub.com and GitLab.com sandbox
-smoke test. Later modules remain disabled until their own acceptance gates pass.
+feature flag. Its real GitHub.com smoke test has passed; the real GitLab.com
+smoke test remains before the M2 gate can close. Later modules remain disabled
+until their own acceptance gates pass.
 
 | Module | Status |
 | --- | --- |
-| M0 · Engineering foundation | Implemented |
-| M1 · Identity and access | Implemented |
-| M2 · SCM and repositories | Implemented locally; real-provider gate pending |
-| M3–M10 | Not started |
+| M0 · Engineering foundation | Gate passed |
+| M1 · Identity and access | Gate passed |
+| M2 · SCM and repositories | Implemented; GitHub smoke passed, GitLab smoke pending |
+| M3 · Agent Compose execution adapter | Not started |
+| M4 · Task and audit core | Not started |
+| M5 · Code review | Not started |
+| M6 · CI diagnosis | Not started |
+| M7 · Approval and governance | Not started |
+| M8 · Issue repair | Not started |
+| M9 · Automation and administration | Not started |
+| M10 · Enterprise delivery hardening | Not started |
+
+The business modules must be delivered in the order M5 → M6 → M7 → M8. Each
+module remains hidden behind a feature flag until its automated checks,
+clean-stack E2E test, security checks, and real-provider smoke test pass.
 
 ## Architecture
 
 ```text
 Browser
-  └─ Gateway :8088
+  └─ Gateway (same-origin HTTPS)
        ├─ Vinext web
        └─ Go API / worker
-            └─ PostgreSQL
-
-Agent Compose is connected as a separate control plane in M3.
+            ├─ PostgreSQL
+            ├─ GitHub.com / GitLab.com
+            └─ Agent Compose daemon (M3)
+                 └─ Codex Agent sandbox
 ```
 
 The same Go binary exposes separate commands for the API, worker, migrations,
 and database health checks. PostgreSQL migrations are embedded in that binary
 and guarded by an advisory lock so API and worker startup are safe to run
-concurrently.
+concurrently. PostgreSQL also provides the transactional Outbox and MVP job
+queue, avoiding a Redis or message-broker dependency.
+
+SCM and Agent Compose integrations are defined behind provider-neutral adapter
+boundaries. Business logic must not depend directly on GitHub, GitLab, or Agent
+provider SDKs.
 
 ## Start the stack
 
@@ -71,12 +110,65 @@ The OIDC implementation uses Authorization Code with PKCE. The local
 administrator remains available as an emergency fallback when discovery or
 token exchange fails.
 
+## Configure SCM providers
+
 M2 supports GitHub.com through a GitHub App and GitLab.com through an OAuth
-Application. Enable its server routes with `REPOMENDER_FEATURE_M2_SCM=true`,
-provide a 32-byte base64 `REPOMENDER_MASTER_KEY`, and configure either or both
-provider credential groups documented in `.env.example`. The GitHub private key
-can be injected as base64 or mounted as a file. Provider credentials are never
-exposed by the REST API; persisted GitLab tokens are encrypted with AES-256-GCM.
+Application. Enable its server routes and provide the encryption key:
+
+```text
+REPOMENDER_FEATURE_M2_SCM=true
+REPOMENDER_MASTER_KEY=<32 random bytes encoded with standard base64>
+```
+
+### GitHub.com
+
+Create a GitHub App with these URLs, replacing `https://repomender.example.com`
+with the externally reachable RepoMender origin:
+
+```text
+Homepage URL: https://repomender.example.com
+Setup URL:    https://repomender.example.com/api/v1/scm/github/callback
+Webhook URL:  https://repomender.example.com/webhooks/github
+```
+
+Enable webhook SSL verification and configure:
+
+```text
+REPOMENDER_GITHUB_APP_ID
+REPOMENDER_GITHUB_APP_SLUG
+REPOMENDER_GITHUB_APP_PRIVATE_KEY_B64
+REPOMENDER_GITHUB_APP_PRIVATE_KEY_FILE
+REPOMENDER_GITHUB_WEBHOOK_SECRET
+```
+
+Supply exactly one private-key source: base64 content or a mounted PEM file.
+Recommended repository permissions are read/write access to contents, checks,
+commit statuses, issues, and pull requests, plus read access to actions and
+metadata. Subscribe to push, pull request, issues, workflow run, check run, and
+check suite events.
+
+The real GitHub M2 smoke test uses the private
+[repomender-sandbox](https://github.com/EasonW3300/repomender-sandbox)
+repository. The GitHub App is restricted to that repository.
+
+### GitLab.com
+
+Create a GitLab OAuth Application with:
+
+```text
+Redirect URI: https://repomender.example.com/api/v1/scm/gitlab/callback
+```
+
+Then configure:
+
+```text
+REPOMENDER_GITLAB_CLIENT_ID
+REPOMENDER_GITLAB_CLIENT_SECRET
+REPOMENDER_GITLAB_WEBHOOK_SECRET
+```
+
+The GitLab.com real-provider smoke test is still pending. M2 must not be tagged
+as complete and M3 must not begin until that test passes.
 
 Once signed in as an administrator, open `/repositories` to connect providers.
 Administrators and maintainers can resynchronize snapshots. All authenticated
@@ -86,6 +178,11 @@ roles can inspect connected repositories. Webhooks are accepted at:
 POST /webhooks/github
 POST /webhooks/gitlab
 ```
+
+Provider credentials are never exposed by the REST API. Persisted secrets and
+GitLab tokens are encrypted with AES-256-GCM. Webhooks are verified before
+normalization, deduplicated by provider delivery ID, and published through the
+transactional Outbox.
 
 Stop the stack without deleting its database:
 
@@ -109,13 +206,34 @@ TEST_DATABASE_URL='postgres://...' go test -p=1 -tags=integration ./internal/dat
 
 The CI workflow repeats frontend validation, Go race and static checks,
 PostgreSQL migration integration tests, and Compose configuration validation.
-Acceptance evidence is recorded under `docs/acceptance/`.
+Acceptance evidence is recorded in:
+
+- [M00 engineering foundation](docs/acceptance/M00.md)
+- [M01 identity and access](docs/acceptance/M01.md)
+- [M02 SCM and repositories](docs/acceptance/M02.md)
+
+M2's clean-stack fixture smoke environment is defined in
+`compose.scm-smoke.yaml`. It validates both provider protocols without placing
+real provider credentials or private keys in the repository.
 
 ## Configuration
 
 All runtime values use the `REPOMENDER_` prefix. `.env.example` documents local
 defaults and optional registry mirrors. Secrets must remain in ignored `.env`
-files or an external secret manager.
+files or an external secret manager. Temporary HTTPS tunnels are suitable only
+for provider smoke tests; production callbacks and webhooks require a stable
+HTTPS origin.
+
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `app/` | Vinext web application and UI components |
+| `server/` | Go API, worker, domain services, adapters, and migrations |
+| `docs/acceptance/` | Module gate evidence and remaining blockers |
+| `docs/architecture/` | Architecture decisions and module design |
+| `deploy/` | Local OIDC and SCM smoke-test fixtures |
+| `.github/workflows/` | Repository CI gates |
 
 ## License
 
