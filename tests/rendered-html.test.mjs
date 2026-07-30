@@ -42,7 +42,7 @@ test("server-renders the RepoMender dashboard", async () => {
 });
 
 test("direct product routes preserve the application shell", async () => {
-  for (const pathname of ["/reviews", "/diagnostics/pg16", "/repairs/731", "/settings", "/login"]) {
+  for (const pathname of ["/reviews", "/diagnostics/pg16", "/repairs/731", "/repositories", "/repositories/test-id", "/settings", "/login"]) {
     const response = await render(pathname);
     assert.equal(response.status, 200, pathname);
     const html = await response.text();
@@ -69,5 +69,9 @@ test("source keeps navigation, approval, and accessibility behaviors wired", asy
   assert.match(app, /localStorage\.setItem\("repomender-theme"/);
   assert.match(app, /\/api\/v1\/auth\/\$\{mode\}/);
   assert.match(app, /Continue with enterprise SSO/);
+  assert.match(app, /\/api\/v1\/scm\/connections/);
+  assert.match(app, /\/api\/v1\/repositories/);
+  assert.match(app, /Install GitHub App/);
+  assert.match(app, /Connect GitLab/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });

@@ -1,0 +1,12 @@
+ARG GO_BUILD_IMAGE=golang:1.26-alpine
+ARG ALPINE_IMAGE=alpine:3.22
+
+FROM ${GO_BUILD_IMAGE} AS build
+WORKDIR /src
+COPY server/ ./
+RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags="-s -w" -o /out/scmfixture ./cmd/scmfixture
+
+FROM ${ALPINE_IMAGE}
+COPY --from=build /out/scmfixture /usr/local/bin/scmfixture
+USER 65532:65532
+ENTRYPOINT ["scmfixture"]

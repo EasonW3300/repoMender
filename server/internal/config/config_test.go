@@ -65,3 +65,31 @@ func TestLoadRejectsInvalidCookieSecurityFlag(t *testing.T) {
 		t.Fatal("expected invalid cookie security flag error")
 	}
 }
+
+func TestLoadRequiresMasterKeyWhenM2SCMIsEnabled(t *testing.T) {
+	values := map[string]string{
+		"REPOMENDER_DATABASE_URL":   "postgres://example",
+		"REPOMENDER_FEATURE_M2_SCM": "true",
+	}
+	_, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err == nil {
+		t.Fatal("expected missing SCM master key error")
+	}
+}
+
+func TestLoadRejectsPartialSCMProviderConfiguration(t *testing.T) {
+	values := map[string]string{
+		"REPOMENDER_DATABASE_URL":  "postgres://example",
+		"REPOMENDER_GITHUB_APP_ID": "123",
+	}
+	_, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err == nil {
+		t.Fatal("expected partial GitHub App configuration error")
+	}
+}

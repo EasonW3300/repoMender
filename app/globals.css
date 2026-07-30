@@ -2676,6 +2676,83 @@ kbd {
   color: var(--text);
 }
 
+.repository-card.repository-disabled {
+  opacity: 0.66;
+}
+
+.scm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.scm-message {
+  margin-bottom: 14px;
+}
+
+.connection-list {
+  display: grid;
+}
+
+.connection-row {
+  align-items: center;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 11px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 13px 16px;
+}
+
+.connection-row:first-child {
+  border-top: 0;
+}
+
+.connection-row strong,
+.connection-row small {
+  display: block;
+}
+
+.connection-row small {
+  color: var(--muted);
+  font-size: 9px;
+  margin-top: 2px;
+  text-transform: capitalize;
+}
+
+.link-button {
+  align-items: center;
+  display: inline-flex;
+  text-decoration: none;
+}
+
+.repository-facts {
+  display: grid;
+  margin: 0;
+}
+
+.repository-facts div {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 150px minmax(0, 1fr);
+  padding: 13px 16px;
+}
+
+.repository-facts div:first-child {
+  border-top: 0;
+}
+
+.repository-facts dt {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.repository-facts dd {
+  font-family: var(--font-geist-mono);
+  font-size: 10px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 .automation-layout {
   display: grid;
   gap: 16px;
