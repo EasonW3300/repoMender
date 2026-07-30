@@ -1,0 +1,75 @@
+name: repomender
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: repomender
+      POSTGRES_USER: repomender
+      POSTGRES_PASSWORD: ${REPOMENDER_POSTGRES_PASSWORD:-repomender-dev}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U repomender -d repomender"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - repomender-postgres:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      args:
+        GO_BUILD_IMAGE: ${REPOMENDER_GO_BUILD_IMAGE:-golang:1.26-alpine}
+        ALPINE_IMAGE: ${REPOMENDER_ALPINE_IMAGE:-alpine:3.22}
+        GO_PROXY: ${REPOMENDER_GO_PROXY:-https://proxy.golang.org,direct}
+    command: ["api"]
+    environment:
+      REPOMENDER_DATABASE_URL: postgres://repomender:${REPOMENDER_POSTGRES_PASSWORD:-repomender-dev}@postgres:5432/repomender?sslmode=disable
+      REPOMENDER_HTTP_ADDRESS: :8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "repomender", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      args:
+        GO_BUILD_IMAGE: ${REPOMENDER_GO_BUILD_IMAGE:-golang:1.26-alpine}
+        ALPINE_IMAGE: ${REPOMENDER_ALPINE_IMAGE:-alpine:3.22}
+        GO_PROXY: ${REPOMENDER_GO_PROXY:-https://proxy.golang.org,direct}
+    command: ["worker"]
+    environment:
+      REPOMENDER_DATABASE_URL: postgres://repomender:${REPOMENDER_POSTGRES_PASSWORD:-repomender-dev}@postgres:5432/repomender?sslmode=disable
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        NODE_IMAGE: ${REPOMENDER_NODE_IMAGE:-node:24-alpine}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  gateway:
+    image: caddy:2.10-alpine
+    ports:
+      - "${REPOMENDER_HTTP_PORT:-8088}:8088"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - web
+      - api
+
+volumes:
+  repomender-postgres:
