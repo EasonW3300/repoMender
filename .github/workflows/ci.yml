@@ -51,7 +51,7 @@ jobs:
           cache-dependency-path: server/go.sum
       - run: go test -race ./...
       - run: go vet ./...
-      - run: go test -tags=integration ./internal/database
+      - run: go test -tags=integration ./internal/database ./internal/auth
 
   compose:
     runs-on: ubuntu-latest
