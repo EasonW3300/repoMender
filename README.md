@@ -15,7 +15,7 @@ until their own acceptance gates pass.
 | Module | Status |
 | --- | --- |
 | M0 · Engineering foundation | Implemented |
-| M1 · Identity and access | Implemented; awaiting PR gate |
+| M1 · Identity and access | Implemented; awaiting merge |
 | M2–M10 | Not started |
 
 ## Architecture
