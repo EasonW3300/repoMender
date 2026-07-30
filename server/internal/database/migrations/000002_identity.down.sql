@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS oidc_flows;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS users;

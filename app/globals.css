@@ -1657,6 +1657,163 @@ kbd {
   }
 }
 
+.identity-app {
+  min-height: 100vh;
+}
+
+.identity-shell {
+  display: grid;
+  grid-template-columns: minmax(360px, 520px) minmax(360px, 1fr);
+  min-height: 100vh;
+}
+
+.identity-card {
+  align-self: center;
+  margin: 36px auto;
+  max-width: 420px;
+  padding: 28px;
+  width: 100%;
+}
+
+.identity-brand {
+  align-items: center;
+  display: flex;
+  font-size: 15px;
+  gap: 10px;
+  margin-bottom: 42px;
+}
+
+.identity-card h1 {
+  font-size: 28px;
+  letter-spacing: -0.04em;
+  line-height: 1.2;
+  margin-bottom: 9px;
+}
+
+.identity-card > p {
+  color: var(--muted);
+  margin-bottom: 22px;
+}
+
+.oidc-button {
+  width: 100%;
+}
+
+.identity-divider {
+  align-items: center;
+  color: var(--faint);
+  display: flex;
+  font-size: 9px;
+  gap: 10px;
+  margin: 18px 0;
+  text-transform: uppercase;
+}
+
+.identity-divider::before,
+.identity-divider::after {
+  background: var(--border);
+  content: "";
+  flex: 1;
+  height: 1px;
+}
+
+.identity-card form {
+  display: grid;
+  gap: 13px;
+}
+
+.identity-card form label {
+  display: grid;
+  font-size: 10px;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.identity-card form input {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.identity-message {
+  background: var(--blue-soft);
+  border: 1px solid color-mix(in srgb, var(--blue) 20%, transparent);
+  border-radius: 8px;
+  color: var(--blue);
+  font-size: 10px;
+  padding: 9px;
+}
+
+.identity-mode {
+  margin-top: 15px;
+  width: 100%;
+}
+
+.identity-context {
+  align-items: center;
+  background:
+    radial-gradient(circle at 78% 18%, rgb(255 255 255 / 16%), transparent 20rem),
+    linear-gradient(145deg, #083b38, #0f766e 56%, #144f68);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(42px, 7vw, 100px);
+}
+
+.identity-context .eyebrow {
+  color: #99f6e4;
+  width: 100%;
+}
+
+.identity-context h2 {
+  font-size: clamp(30px, 4vw, 54px);
+  letter-spacing: -0.05em;
+  line-height: 1.05;
+  max-width: 760px;
+}
+
+.identity-context ul {
+  display: grid;
+  gap: 14px;
+  list-style: none;
+  margin: 30px 0 0;
+  max-width: 760px;
+  padding: 0;
+  width: 100%;
+}
+
+.identity-context li {
+  border-left: 2px solid rgb(153 246 228 / 65%);
+  padding-left: 13px;
+}
+
+.identity-context li strong,
+.identity-context li span {
+  display: block;
+}
+
+.identity-context li span {
+  color: rgb(255 255 255 / 70%);
+  font-size: 11px;
+}
+
+@media (max-width: 820px) {
+  .identity-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .identity-context {
+    display: none;
+  }
+
+  .identity-card {
+    padding: 22px;
+  }
+}
+
 /* Component-level bindings for the RepoMender product shell. */
 .workspace > main {
   margin: 0 auto;

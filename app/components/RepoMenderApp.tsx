@@ -408,6 +408,80 @@ function SettingsPage() {
   );
 }
 
+function IdentityPage({ navigate }: { navigate: (route: string) => void }) {
+  const [mode, setMode] = useState<"login" | "bootstrap">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setPending(true);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/v1/auth/${mode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({ error: "request_failed" }));
+        setMessage(result.error === "bootstrap_unavailable"
+          ? "An administrator already exists. Sign in instead."
+          : "The credentials could not be accepted.");
+        return;
+      }
+      if (mode === "bootstrap") {
+        setMode("login");
+        setPassword("");
+        setMessage("Administrator created. Sign in to continue.");
+        return;
+      }
+      navigate("/");
+    } catch {
+      setMessage("RepoMender API is unavailable. Check the self-hosted stack and try again.");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <main className="identity-shell">
+      <section className="identity-card">
+        <div className="identity-brand"><i className="brand-mark" /><strong>RepoMender</strong></div>
+        <span className="eyebrow">Enterprise access</span>
+        <h1>{mode === "login" ? "Sign in to your control plane" : "Create the bootstrap administrator"}</h1>
+        <p>{mode === "login"
+          ? "Use enterprise SSO or the emergency local administrator account."
+          : "This one-time path closes permanently after the first administrator is created."}</p>
+        <button className="secondary-button oidc-button" onClick={() => window.location.assign("/api/v1/auth/oidc/start")}>
+          Continue with enterprise SSO
+        </button>
+        <div className="identity-divider"><span>or use local fallback</span></div>
+        <form onSubmit={submit}>
+          <label>Email<input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+          <label>Password<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={12} required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+          {message ? <div className="identity-message" role="status">{message}</div> : null}
+          <button className="primary-button full-button" disabled={pending}>{pending ? "Please wait…" : mode === "login" ? "Sign in" : "Create administrator"}</button>
+        </form>
+        <button className="text-button identity-mode" onClick={() => { setMode(mode === "login" ? "bootstrap" : "login"); setMessage(""); }}>
+          {mode === "login" ? "First installation? Create administrator" : "Administrator already exists? Sign in"}
+        </button>
+      </section>
+      <aside className="identity-context">
+        <span className="eyebrow">Governed engineering automation</span>
+        <h2>Review, diagnose, and repair without surrendering control.</h2>
+        <ul>
+          <li><strong>Isolated execution</strong><span>Agent Compose keeps every task in a governed sandbox.</span></li>
+          <li><strong>Human approval</strong><span>High-impact actions pause before code or permissions change.</span></li>
+          <li><strong>Complete evidence</strong><span>Runs, findings, tests, and decisions remain auditable.</span></li>
+        </ul>
+      </aside>
+    </main>
+  );
+}
+
 export function RepoMenderApp() {
   const pathname = usePathname();
   const router = useRouter();
@@ -459,6 +533,7 @@ export function RepoMenderApp() {
   };
 
   const routeContent = () => {
+    if (pathname === "/login") return <IdentityPage navigate={navigate} />;
     if (pathname === "/") return <Dashboard navigate={navigate} />;
     if (pathname === "/tasks") return <ListPage title="All tasks" description="Unified reviews, diagnostics, repairs, and future maintenance automations." navigate={navigate} />;
     if (pathname === "/reviews") return <ListPage type="Code Review" title="Code reviews" description="Pull request risk, findings, evidence, and suggested repairs." navigate={navigate} />;
@@ -475,6 +550,10 @@ export function RepoMenderApp() {
     if (pathname === "/settings") return <SettingsPage />;
     return <Dashboard navigate={navigate} />;
   };
+
+  if (pathname === "/login") {
+    return <div className="app-shell identity-app" data-theme={theme}><IdentityPage navigate={navigate} /></div>;
+  }
 
   return (
     <div className="app-shell" data-theme={theme}>
@@ -495,7 +574,7 @@ export function RepoMenderApp() {
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMobileNav((open) => !open)} aria-label="Toggle navigation">☰</button>
           <button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>Search tasks, repositories, PRs, or commands</span><kbd>⌘ K</kbd></button>
-          <div className="topbar-actions"><button className="icon-button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>{theme === "light" ? "◐" : "☀"}</button><button className="icon-button" aria-label="Notifications">◇<i className="notification-dot" /></button><button className="user-button" aria-label="Open user menu">LW</button></div>
+          <div className="topbar-actions"><button className="icon-button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>{theme === "light" ? "◐" : "☀"}</button><button className="icon-button" aria-label="Notifications">◇<i className="notification-dot" /></button><button className="user-button" onClick={() => navigate("/login")} aria-label="Open sign-in and account page">LW</button></div>
         </header>
         <main>{routeContent()}</main>
         <nav className="mobile-tabs" aria-label="Mobile navigation"><button className={pathname === "/" ? "active" : ""} onClick={() => navigate("/")}>Overview</button><button className={pathname.startsWith("/reviews") ? "active" : ""} onClick={() => navigate("/reviews")}>Reviews</button><button className={pathname.startsWith("/approvals") ? "active" : ""} onClick={() => navigate("/approvals")}>Approvals</button><button className={pathname.startsWith("/tasks") ? "active" : ""} onClick={() => navigate("/tasks")}>Tasks</button></nav>

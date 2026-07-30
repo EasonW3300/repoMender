@@ -1,0 +1,18 @@
+# Add this override only for the local M1 OIDC acceptance smoke.
+services:
+  dex:
+    image: ghcr.io/dexidp/dex:v2.44.0
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    ports:
+      - "15556:5556"
+    volumes:
+      - ./deploy/oidc-smoke/dex.yaml:/etc/dex/config.yaml:ro
+
+  api:
+    environment:
+      REPOMENDER_PUBLIC_URL: http://localhost:18088
+      REPOMENDER_OIDC_ISSUER: http://host.docker.internal:15556/dex
+      REPOMENDER_OIDC_CLIENT_ID: repomender-smoke
+      REPOMENDER_OIDC_CLIENT_SECRET: repomender-smoke-secret
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

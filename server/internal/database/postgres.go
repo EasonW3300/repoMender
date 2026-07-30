@@ -10,11 +10,12 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// pgx supplies the typed no-row sentinel, while pgxpool provides concurrency-safe
-// PostgreSQL connections for health checks and transactional migrations.
+// pgx supplies transaction and row contracts, pgconn exposes command results, and
+// pgxpool provides concurrency-safe connections shared by stores and migrations.
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -42,6 +43,22 @@ func (db *DB) Close() {
 
 func (db *DB) Ping(ctx context.Context) error {
 	return db.pool.Ping(ctx)
+}
+
+func (db *DB) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	return db.pool.Exec(ctx, sql, arguments...)
+}
+
+func (db *DB) Query(ctx context.Context, sql string, arguments ...any) (pgx.Rows, error) {
+	return db.pool.Query(ctx, sql, arguments...)
+}
+
+func (db *DB) QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row {
+	return db.pool.QueryRow(ctx, sql, arguments...)
+}
+
+func (db *DB) Begin(ctx context.Context) (pgx.Tx, error) {
+	return db.pool.Begin(ctx)
 }
 
 func MigrateUp(ctx context.Context, db *DB) error {

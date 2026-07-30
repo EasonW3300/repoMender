@@ -22,11 +22,16 @@ services:
       args:
         GO_BUILD_IMAGE: ${REPOMENDER_GO_BUILD_IMAGE:-golang:1.26-alpine}
         ALPINE_IMAGE: ${REPOMENDER_ALPINE_IMAGE:-alpine:3.22}
-        GO_PROXY: ${REPOMENDER_GO_PROXY:-https://proxy.golang.org,direct}
     command: ["api"]
     environment:
       REPOMENDER_DATABASE_URL: postgres://repomender:${REPOMENDER_POSTGRES_PASSWORD:-repomender-dev}@postgres:5432/repomender?sslmode=disable
       REPOMENDER_HTTP_ADDRESS: :8080
+      REPOMENDER_PUBLIC_URL: http://localhost:${REPOMENDER_HTTP_PORT:-8088}
+      REPOMENDER_SESSION_TTL: ${REPOMENDER_SESSION_TTL:-28800}
+      REPOMENDER_COOKIE_SECURE: ${REPOMENDER_COOKIE_SECURE:-false}
+      REPOMENDER_OIDC_ISSUER: ${REPOMENDER_OIDC_ISSUER:-}
+      REPOMENDER_OIDC_CLIENT_ID: ${REPOMENDER_OIDC_CLIENT_ID:-}
+      REPOMENDER_OIDC_CLIENT_SECRET: ${REPOMENDER_OIDC_CLIENT_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,7 +48,6 @@ services:
       args:
         GO_BUILD_IMAGE: ${REPOMENDER_GO_BUILD_IMAGE:-golang:1.26-alpine}
         ALPINE_IMAGE: ${REPOMENDER_ALPINE_IMAGE:-alpine:3.22}
-        GO_PROXY: ${REPOMENDER_GO_PROXY:-https://proxy.golang.org,direct}
     command: ["worker"]
     environment:
       REPOMENDER_DATABASE_URL: postgres://repomender:${REPOMENDER_POSTGRES_PASSWORD:-repomender-dev}@postgres:5432/repomender?sslmode=disable

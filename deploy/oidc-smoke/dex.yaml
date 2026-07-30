@@ -1,0 +1,26 @@
+# Local-only OIDC provider used by the M1 acceptance smoke test.
+issuer: http://host.docker.internal:15556/dex
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  skipApprovalScreen: true
+
+staticClients:
+  - id: repomender-smoke
+    name: RepoMender M1 smoke
+    secret: repomender-smoke-secret
+    redirectURIs:
+      - http://localhost:18088/api/v1/auth/oidc/callback
+
+enablePasswordDB: true
+staticPasswords:
+  - email: oidc-developer@example.com
+    # Test-only password: M1-OIDC-Smoke-Password
+    hash: "$2y$10$w8mkOldaZZUeTrvJqv5jJO0GC7JgdtY4cUegTgKI8GZiI9KIADCZa"
+    username: oidc-developer
+    userID: 00000000-0000-4000-8000-000000000002
