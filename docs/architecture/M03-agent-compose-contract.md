@@ -110,7 +110,14 @@ and a terminal event. The run then failed because the AC sandbox could not
 reach `https://api.openai.com/v1/responses` without the host's local proxy.
 RepoMender maps that terminal outcome to `ac_agent_failed`.
 
-The M3 gate remains open until a real run succeeds and real cancellation is
-observed. Unit and HTTP fixtures already cover cancellation, deadline-driven
+An explicitly authorized temporary proxy bridge proved outbound transport and
+changed the real failure to OpenAI HTTP 401, confirming the AC control plane
+still needs an OpenAI-family credential. Real run `b97d4d9eecbd…` then proved
+`StopRun`, persisted cancellation, a terminal SSE event, and
+`ac_cancelled` result mapping. The bridge and temporary Agent proxy variables
+were removed afterward.
+
+The M3 gate remains open until a real run succeeds. Unit and HTTP fixtures
+cover cancellation, deadline-driven
 `StopRun`, reconnect offsets, malformed frames, dropped streams, redaction,
 RBAC, CSRF, and stable SSE errors.
