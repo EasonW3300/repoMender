@@ -1,12 +1,12 @@
 "use client";
 
 import type { FormEvent, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { approvals, navigation, repositories, tasks, TaskRecord, Tone } from "../lib/data";
+import { approvals, navigation, tasks, TaskRecord, Tone } from "../lib/data";
 
-// React state drives the interactive prototype, while Next navigation provides durable,
-// shareable URLs for every list and detail screen.
+// React effects load same-origin SCM APIs after hydration, while Next navigation
+// provides durable, shareable URLs for repository list and detail screens.
 
 type DialogState = {
   title: string;
@@ -14,6 +14,30 @@ type DialogState = {
   action: string;
   danger?: boolean;
 } | null;
+
+type SCMConnection = {
+  id: string;
+  provider: "github" | "gitlab";
+  name: string;
+  status: string;
+  lastSyncedAt?: string;
+};
+
+type ConnectedRepository = {
+  id: string;
+  connectionId: string;
+  provider: "github" | "gitlab";
+  providerRepositoryId: string;
+  fullName: string;
+  cloneUrl: string;
+  webUrl: string;
+  defaultBranch: string;
+  visibility: string;
+  archived: boolean;
+  enabled: boolean;
+  metadata?: Record<string, unknown>;
+  lastSyncedAt: string;
+};
 
 const detailTabs = ["Summary", "Findings", "Agent activity", "Tests", "Artifacts", "Run details", "Audit history"];
 
@@ -345,23 +369,129 @@ function ApprovalsPage({ openDialog }: { openDialog: (dialog: DialogState) => vo
   );
 }
 
+function csrfToken() {
+  const value = document.cookie.split("; ").find((item) => item.startsWith("repomender_csrf="));
+  return value ? decodeURIComponent(value.split("=").slice(1).join("=")) : "";
+}
+
 function RepositoriesPage({ navigate }: { navigate: (route: string) => void }) {
+  const [connections, setConnections] = useState<SCMConnection[]>([]);
+  const [connectedRepositories, setConnectedRepositories] = useState<ConnectedRepository[]>([]);
+  const [providers, setProviders] = useState({ github: false, gitlab: false });
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const [syncing, setSyncing] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMessage("");
+    try {
+      const [connectionResponse, repositoryResponse, providerResponse] = await Promise.all([
+        fetch("/api/v1/scm/connections"),
+        fetch("/api/v1/repositories"),
+        fetch("/api/v1/scm/providers"),
+      ]);
+      if ([connectionResponse, repositoryResponse, providerResponse].some((response) => response.status === 401)) {
+        navigate("/login");
+        return;
+      }
+      if (!connectionResponse.ok || !repositoryResponse.ok || !providerResponse.ok) {
+        throw new Error("SCM API unavailable");
+      }
+      const [connectionData, repositoryData, providerData] = await Promise.all([
+        connectionResponse.json(), repositoryResponse.json(), providerResponse.json(),
+      ]);
+      setConnections(connectionData.connections ?? []);
+      setConnectedRepositories(repositoryData.repositories ?? []);
+      setProviders({
+        github: Boolean(providerData.providers?.github),
+        gitlab: Boolean(providerData.providers?.gitlab),
+      });
+    } catch {
+      setMessage("SCM connections are not enabled or the RepoMender API is unavailable.");
+    } finally {
+      setLoading(false);
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  const connect = (provider: "github" | "gitlab") => {
+    window.location.assign(`/api/v1/scm/${provider}/connect?returnTo=/repositories`);
+  };
+
+  const sync = async (connection: SCMConnection) => {
+    setSyncing(connection.id);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/v1/scm/connections/${connection.id}/sync`, {
+        method: "POST",
+        headers: { "X-CSRF-Token": csrfToken() },
+      });
+      if (!response.ok) throw new Error("sync failed");
+      await load();
+    } catch {
+      setMessage(`Could not synchronize ${connection.name}. Check provider access and try again.`);
+    } finally {
+      setSyncing("");
+    }
+  };
+
   return (
     <>
-      <PageHeader eyebrow="Assets" title="Repositories" description="Connected codebases, automation coverage, and current engineering risk." actions={<button className="primary-button">Connect repository</button>} />
-      <section className="panel"><div className="panel-heading"><div><span className="eyebrow">Organization</span><h2>4 connected repositories</h2></div><button className="text-button">Manage groups</button></div>
-        <div className="repository-grid">{repositories.map((repository) => <button className="repository-card" key={repository.name} onClick={() => navigate(`/repositories/${repository.name}`)}><div><span className="repo-mark">{repository.name.slice(0, 2).toUpperCase()}</span><span><strong>{repository.name}</strong><small>{repository.team} · {repository.language}</small></span></div><div className="repo-stats"><span><small>Health</small><strong>{repository.health}</strong></span><span><small>Findings</small><strong>{repository.findings}</strong></span><Status tone={repository.tone}>{repository.ci}</Status></div></button>)}</div>
+      <PageHeader eyebrow="Assets · SCM" title="Repositories" description={providers.gitlab ? "GitHub and GitLab codebases synchronized through governed provider connections." : "GitHub repositories synchronized through a governed GitHub App connection."} actions={<div className="scm-actions">{providers.gitlab ? <button className="secondary-button" onClick={() => connect("gitlab")}>Connect GitLab</button> : null}<button className="primary-button" disabled={!providers.github} onClick={() => connect("github")}>Install GitHub App</button></div>} />
+      {message ? <div className="identity-message scm-message" role="status">{message}</div> : null}
+      <section className="panel scm-connections">
+        <div className="panel-heading"><div><span className="eyebrow">Connections</span><h2>{connections.length} active provider {connections.length === 1 ? "connection" : "connections"}</h2></div><Status tone={connections.length ? "success" : "neutral"}>{connections.length ? "Connected" : "Setup required"}</Status></div>
+        {connections.length ? <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={connection.id}><span className="repo-mark">{connection.provider === "github" ? "GH" : "GL"}</span><span><strong>{connection.name}</strong><small>{connection.provider} · {connection.status} · {connection.lastSyncedAt ? `synced ${new Date(connection.lastSyncedAt).toLocaleString()}` : "not synchronized"}</small></span><button className="secondary-button" disabled={syncing === connection.id} onClick={() => void sync(connection)}>{syncing === connection.id ? "Syncing…" : "Sync now"}</button></div>)}</div> : <div className="empty-state"><strong>Connect a source provider</strong><span>{providers.gitlab ? "Configure GitHub App or GitLab OAuth credentials, then authorize a connection." : "Configure and install the RepoMender GitHub App to synchronize repositories."}</span></div>}
+      </section>
+      <section className="panel section-gap"><div className="panel-heading"><div><span className="eyebrow">Synchronized inventory</span><h2>{connectedRepositories.length} repositories</h2></div><button className="text-button" onClick={() => void load()}>Refresh inventory</button></div>
+        {loading ? <div className="empty-state"><strong>Loading connected repositories…</strong></div> : null}
+        {!loading && !connectedRepositories.length ? <div className="empty-state"><strong>No repositories synchronized</strong><span>Complete a provider connection or check its repository permissions.</span></div> : null}
+        {!loading && connectedRepositories.length ? <div className="repository-grid">{connectedRepositories.map((repository) => <button className={`repository-card${repository.enabled ? "" : " repository-disabled"}`} key={repository.id} onClick={() => navigate(`/repositories/${encodeURIComponent(repository.id)}`)}><div><span className="repo-mark">{repository.provider === "github" ? "GH" : "GL"}</span><span><strong>{repository.fullName}</strong><small>{repository.provider} · {String(repository.metadata?.language || repository.visibility)}</small></span></div><div className="repo-stats"><span><small>Default branch</small><strong>{repository.defaultBranch || "Not set"}</strong></span><span><small>Visibility</small><strong>{repository.visibility}</strong></span><Status tone={repository.enabled ? "success" : "warning"}>{repository.enabled ? "Enabled" : "Access removed"}</Status></div></button>)}</div> : null}
       </section>
     </>
   );
 }
 
-function RepositoryDetail() {
+function RepositoryDetail({ id, navigate }: { id: string; navigate: (route: string) => void }) {
+  const [repository, setRepository] = useState<ConnectedRepository | null>(null);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const response = await fetch(`/api/v1/repositories/${encodeURIComponent(id)}`);
+        if (response.status === 401) {
+          navigate("/login");
+          return;
+        }
+        if (!response.ok) throw new Error("repository unavailable");
+        const data = await response.json();
+        setRepository(data.repository);
+      } catch {
+        setMessage("This repository is unavailable or has not been synchronized.");
+      }
+    };
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [id, navigate]);
+
+  if (message) {
+    return <><PageHeader eyebrow="Repository" title="Repository unavailable" description={message} actions={<button className="secondary-button" onClick={() => navigate("/repositories")}>Back to repositories</button>} /></>;
+  }
+  if (!repository) {
+    return <><PageHeader eyebrow="Repository" title="Loading repository…" description="Reading the synchronized SCM inventory." /></>;
+  }
+  const language = String(repository.metadata?.language || "Not reported");
   return (
     <>
-      <PageHeader eyebrow="Repository · Payments Platform" title="payments-api" description="github.com/acme/payments-api · Go · main" actions={<><button className="secondary-button">Open in GitHub</button><button className="primary-button">Run health scan</button></>} />
-      <section className="metric-grid"><Metric label="Health score" value="79" note="6 points below target" /><Metric label="Open findings" value="3" note="1 critical" /><Metric label="CI stability" value="94.2%" note="Last 30 days" positive /><Metric label="Automation coverage" value="4/5" note="Dependency scan degraded" /></section>
-      <div className="dashboard-grid section-gap"><section className="panel"><div className="panel-heading"><div><span className="eyebrow">Activity</span><h2>Recent repository tasks</h2></div></div><TaskTable rows={tasks.filter((task) => task.repository === "payments-api")} onOpen={() => {}} /></section><aside className="panel root-cause"><span className="eyebrow">Governance</span><h2>Payments Standard Guardrails</h2><dl><div><dt>Write access</dt><dd>Approval required</dd></div><div><dt>Network</dt><dd>Internal registries only</dd></div><div><dt>Protected paths</dt><dd>migrations/ · deploy/</dd></div><div><dt>Budget</dt><dd>$15 per task</dd></div></dl></aside></div>
+      <PageHeader eyebrow={`Repository · ${repository.provider}`} title={repository.fullName} description={`${repository.webUrl} · ${language} · ${repository.defaultBranch || "No default branch"}`} actions={<><button className="secondary-button" onClick={() => navigate("/repositories")}>Back</button><a className="primary-button link-button" href={repository.webUrl} target="_blank" rel="noreferrer">Open in {repository.provider === "github" ? "GitHub" : "GitLab"}</a></>} />
+      <section className="metric-grid"><Metric label="Provider" value={repository.provider === "github" ? "GitHub" : "GitLab"} note="Connected SCM" /><Metric label="Default branch" value={repository.defaultBranch || "—"} note="Provider source of truth" /><Metric label="Visibility" value={repository.visibility} note={repository.archived ? "Archived" : "Active repository"} /><Metric label="Access" value={repository.enabled ? "Enabled" : "Removed"} note={`Synced ${new Date(repository.lastSyncedAt).toLocaleString()}`} positive={repository.enabled} /></section>
+      <div className="dashboard-grid section-gap"><section className="panel"><div className="panel-heading"><div><span className="eyebrow">Source inventory</span><h2>Repository identity</h2></div></div><dl className="repository-facts"><div><dt>Repository ID</dt><dd>{repository.id}</dd></div><div><dt>Provider repository ID</dt><dd>{repository.providerRepositoryId}</dd></div><div><dt>Clone URL</dt><dd>{repository.cloneUrl}</dd></div><div><dt>Connection ID</dt><dd>{repository.connectionId}</dd></div></dl></section><aside className="panel root-cause"><span className="eyebrow">M2 boundary</span><h2>Connection verified; execution remains disabled</h2><p>Repository access and webhook delivery are available. Reviews, CI diagnosis, and repairs remain behind later module gates.</p><dl><div><dt>Direct branch writes</dt><dd>Disabled</dd></div><div><dt>Automatic merge</dt><dd>Disabled</dd></div><div><dt>Credential storage</dt><dd>Encrypted or short-lived</dd></div></dl></aside></div>
     </>
   );
 }
@@ -515,11 +645,11 @@ export function RepoMenderApp() {
     };
   }, []);
 
-  const navigate = (route: string) => {
+  const navigate = useCallback((route: string) => {
     router.push(route);
     setCommandOpen(false);
     setMobileNav(false);
-  };
+  }, [router]);
 
   const showToast = (message: string) => {
     setToastMessage(message);
@@ -544,7 +674,7 @@ export function RepoMenderApp() {
     if (pathname.startsWith("/repairs/")) return <RepairDetail openDialog={setDialog} />;
     if (pathname === "/approvals") return <ApprovalsPage openDialog={setDialog} />;
     if (pathname === "/repositories") return <RepositoriesPage navigate={navigate} />;
-    if (pathname.startsWith("/repositories/")) return <RepositoryDetail />;
+    if (pathname.startsWith("/repositories/")) return <RepositoryDetail id={decodeURIComponent(pathname.slice("/repositories/".length))} navigate={navigate} />;
     if (pathname === "/automations") return <AutomationsPage showToast={showToast} />;
     if (pathname === "/runs") return <RunsPage navigate={navigate} />;
     if (pathname === "/settings") return <SettingsPage />;

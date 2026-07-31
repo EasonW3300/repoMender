@@ -1,0 +1,59 @@
+# Local-only GitHub/GitLab protocol fixture for the M2 Compose gate.
+services:
+  scm-keygen:
+    build:
+      context: .
+      dockerfile: Dockerfile.scm-fixture
+      args:
+        GO_BUILD_IMAGE: ${REPOMENDER_GO_BUILD_IMAGE:-golang:1.26-alpine}
+        ALPINE_IMAGE: ${REPOMENDER_ALPINE_IMAGE:-alpine:3.22}
+    command: ["keygen", "/secrets/github.pem"]
+    user: "0:0"
+    volumes:
+      - scm-smoke-secrets:/secrets
+
+  scm-fixture:
+    build:
+      context: .
+      dockerfile: Dockerfile.scm-fixture
+      args:
+        GO_BUILD_IMAGE: ${REPOMENDER_GO_BUILD_IMAGE:-golang:1.26-alpine}
+        ALPINE_IMAGE: ${REPOMENDER_ALPINE_IMAGE:-alpine:3.22}
+    ports:
+      - "19090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9090/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  api:
+    environment:
+      REPOMENDER_PUBLIC_URL: http://localhost:18088
+      REPOMENDER_FEATURE_M2_SCM: "true"
+      REPOMENDER_MASTER_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      REPOMENDER_GITHUB_APP_ID: "1"
+      REPOMENDER_GITHUB_APP_SLUG: repomender-smoke
+      REPOMENDER_GITHUB_APP_PRIVATE_KEY_FILE: /run/scm-smoke/github.pem
+      REPOMENDER_GITHUB_WEBHOOK_SECRET: github-smoke-secret
+      REPOMENDER_GITHUB_API_BASE_URL: http://host.docker.internal:19090/github
+      REPOMENDER_GITHUB_WEB_BASE_URL: http://host.docker.internal:19090/github
+      # Keep the deferred adapter under protocol regression coverage.
+      REPOMENDER_FEATURE_GITLAB: "true"
+      REPOMENDER_GITLAB_CLIENT_ID: gitlab-smoke-client
+      REPOMENDER_GITLAB_CLIENT_SECRET: gitlab-smoke-client-secret
+      REPOMENDER_GITLAB_WEBHOOK_SECRET: gitlab-smoke-secret
+      REPOMENDER_GITLAB_API_BASE_URL: http://host.docker.internal:19090/gitlab/api/v4
+      REPOMENDER_GITLAB_WEB_BASE_URL: http://host.docker.internal:19090/gitlab
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - scm-smoke-secrets:/run/scm-smoke:ro
+    depends_on:
+      scm-keygen:
+        condition: service_completed_successfully
+      scm-fixture:
+        condition: service_healthy
+
+volumes:
+  scm-smoke-secrets:

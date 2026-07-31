@@ -12,10 +12,11 @@ import (
 	"github.com/EasonW3300/repoMender/server/internal/auth"
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
+	"github.com/EasonW3300/repoMender/server/internal/scm"
 )
 
-// auth supplies session, CSRF, RBAC, and OIDC behavior; database constructs the
-// PostgreSQL-backed store while the standard HTTP server remains easy to test.
+// auth supplies identity controls, database constructs PostgreSQL stores, and
+// scm exposes provider-neutral repository and webhook orchestration.
 
 type HealthChecker interface {
 	Ping(context.Context) error
@@ -25,6 +26,7 @@ type Server struct {
 	checker      HealthChecker
 	auth         *auth.Service
 	oidc         auth.OIDCProvider
+	scm          *scm.Service
 	cookieSecure bool
 }
 
@@ -34,6 +36,16 @@ func New(checker HealthChecker) *Server {
 
 func NewWithAuth(checker HealthChecker, service *auth.Service, provider auth.OIDCProvider, cookieSecure bool) *Server {
 	return &Server{checker: checker, auth: service, oidc: provider, cookieSecure: cookieSecure}
+}
+
+func NewWithServices(
+	checker HealthChecker,
+	service *auth.Service,
+	provider auth.OIDCProvider,
+	scmService *scm.Service,
+	cookieSecure bool,
+) *Server {
+	return &Server{checker: checker, auth: service, oidc: provider, scm: scmService, cookieSecure: cookieSecure}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -48,6 +60,17 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/v1/auth/oidc/start", s.oidcStart)
 		mux.HandleFunc("GET /api/v1/auth/oidc/callback", s.oidcCallback)
 		mux.HandleFunc("GET /api/v1/users", s.users)
+	}
+	if s.auth != nil && s.scm != nil {
+		mux.HandleFunc("GET /api/v1/scm/providers", s.scmProviders)
+		mux.HandleFunc("GET /api/v1/scm/connections", s.scmConnections)
+		mux.HandleFunc("GET /api/v1/scm/{provider}/connect", s.scmConnect)
+		mux.HandleFunc("GET /api/v1/scm/{provider}/callback", s.scmCallback)
+		mux.HandleFunc("POST /api/v1/scm/connections/{id}/sync", s.scmSync)
+		mux.HandleFunc("GET /api/v1/repositories", s.repositories)
+		mux.HandleFunc("GET /api/v1/repositories/{id}", s.repository)
+		mux.HandleFunc("POST /webhooks/github", s.githubWebhook)
+		mux.HandleFunc("POST /webhooks/gitlab", s.gitlabWebhook)
 	}
 	return securityHeaders(mux)
 }
@@ -66,9 +89,37 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 			provider = discovered
 		}
 	}
+	var scmService *scm.Service
+	if cfg.FeatureM2SCM {
+		box, err := scm.NewSecretBox(cfg.SCMMasterKey)
+		if err != nil {
+			return err
+		}
+		github, err := scm.NewGitHubAdapter(scm.GitHubConfig{
+			AppID: cfg.GitHubAppID, Slug: cfg.GitHubAppSlug,
+			PrivateKeyPEM: cfg.GitHubPrivateKey, WebhookSecret: cfg.GitHubWebhookSecret,
+			APIBaseURL: cfg.GitHubAPIBaseURL, WebBaseURL: cfg.GitHubWebBaseURL,
+		}, nil)
+		if err != nil {
+			return err
+		}
+		adapters := []scm.Adapter{github}
+		if cfg.FeatureGitLab {
+			// GitLab remains compiled and contract-tested, but only joins the
+			// runtime adapter registry when its dedicated deferred flag is enabled.
+			gitlab := scm.NewGitLabAdapter(scm.GitLabConfig{
+				ClientID: cfg.GitLabClientID, ClientSecret: cfg.GitLabClientSecret,
+				WebhookSecret: cfg.GitLabWebhookSecret,
+				RedirectURL:   strings.TrimRight(cfg.PublicURL, "/") + "/api/v1/scm/gitlab/callback",
+				APIBaseURL:    cfg.GitLabAPIBaseURL, WebBaseURL: cfg.GitLabWebBaseURL,
+			}, nil)
+			adapters = append(adapters, gitlab)
+		}
+		scmService = scm.NewService(scm.NewPostgreSQLStore(db), box, adapters...)
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           NewWithAuth(db, service, provider, cfg.CookieSecure).Handler(),
+		Handler:           NewWithServices(db, service, provider, scmService, cfg.CookieSecure).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
