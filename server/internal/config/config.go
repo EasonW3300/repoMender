@@ -3,13 +3,15 @@ package config
 import (
 	"encoding/base64"
 	"errors"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
-// base64 decodes master keys and PEM credentials supplied through secret-aware
-// environment injection. Config remains the validated API/worker contract.
+// base64 decodes secret-aware values, while net/url and strings normalize
+// external service endpoints before they are shared by the API and worker.
 type Config struct {
 	HTTPAddress          string
 	PublicURL            string
@@ -22,6 +24,7 @@ type Config struct {
 	OIDCClientID         string
 	OIDCClientSecret     string
 	FeatureM2SCM         bool
+	FeatureM3ACExecution bool
 	FeatureGitLab        bool
 	SCMMasterKey         []byte
 	GitHubAppID          int64
@@ -36,6 +39,11 @@ type Config struct {
 	GitLabWebhookSecret  string
 	GitLabAPIBaseURL     string
 	GitLabWebBaseURL     string
+	ACBaseURL            string
+	ACAuthToken          string
+	ACRequiredVersion    string
+	ACRequiredDriver     string
+	ACRequestTimeout     time.Duration
 }
 
 func Load() (Config, error) {
@@ -66,6 +74,10 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	featureM3ACExecution, err := boolOrDefault(lookup, "REPOMENDER_FEATURE_M3_AC_EXECUTION", false)
+	if err != nil {
+		return Config{}, err
+	}
 	masterKey, err := decodeBase64Value(lookup, "REPOMENDER_MASTER_KEY")
 	if err != nil {
 		return Config{}, err
@@ -90,6 +102,7 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		OIDCClientID:         valueOrDefault(lookup, "REPOMENDER_OIDC_CLIENT_ID", ""),
 		OIDCClientSecret:     valueOrDefault(lookup, "REPOMENDER_OIDC_CLIENT_SECRET", ""),
 		FeatureM2SCM:         featureM2SCM,
+		FeatureM3ACExecution: featureM3ACExecution,
 		FeatureGitLab:        featureGitLab,
 		SCMMasterKey:         masterKey,
 		GitHubAppID:          githubAppID,
@@ -104,12 +117,17 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		GitLabWebhookSecret:  valueOrDefault(lookup, "REPOMENDER_GITLAB_WEBHOOK_SECRET", ""),
 		GitLabAPIBaseURL:     valueOrDefault(lookup, "REPOMENDER_GITLAB_API_BASE_URL", "https://gitlab.com/api/v4"),
 		GitLabWebBaseURL:     valueOrDefault(lookup, "REPOMENDER_GITLAB_WEB_BASE_URL", "https://gitlab.com"),
+		ACBaseURL:            strings.TrimRight(valueOrDefault(lookup, "REPOMENDER_AC_BASE_URL", ""), "/"),
+		ACAuthToken:          valueOrDefault(lookup, "REPOMENDER_AC_AUTH_TOKEN", ""),
+		ACRequiredVersion:    valueOrDefault(lookup, "REPOMENDER_AC_REQUIRED_VERSION", ""),
+		ACRequiredDriver:     valueOrDefault(lookup, "REPOMENDER_AC_REQUIRED_DRIVER", "docker"),
+		ACRequestTimeout:     durationOrDefault(lookup, "REPOMENDER_AC_REQUEST_TIMEOUT", 10*time.Second),
 	}
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("REPOMENDER_DATABASE_URL is required")
 	}
-	if cfg.ShutdownTimeout <= 0 || cfg.WorkerPoll <= 0 || cfg.SessionTTL <= 0 {
+	if cfg.ShutdownTimeout <= 0 || cfg.WorkerPoll <= 0 || cfg.SessionTTL <= 0 || cfg.ACRequestTimeout <= 0 {
 		return Config{}, errors.New("timeouts and polling intervals must be positive")
 	}
 	oidcValues := []string{cfg.OIDCIssuer, cfg.OIDCClientID, cfg.OIDCClientSecret}
@@ -141,6 +159,15 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		}
 		if partiallyConfigured(gitlabValues) {
 			return Config{}, errors.New("GitLab client ID, client secret, and webhook secret must be configured together")
+		}
+	}
+	if cfg.FeatureM3ACExecution {
+		if cfg.ACBaseURL == "" {
+			return Config{}, errors.New("REPOMENDER_AC_BASE_URL is required when M3 AC execution is enabled")
+		}
+		endpoint, err := url.Parse(cfg.ACBaseURL)
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" {
+			return Config{}, errors.New("REPOMENDER_AC_BASE_URL must be an absolute HTTP(S) URL")
 		}
 	}
 

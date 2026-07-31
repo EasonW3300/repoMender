@@ -18,6 +18,12 @@ func TestLoadUsesValidatedDefaults(t *testing.T) {
 	if cfg.FeatureGitLab {
 		t.Fatal("GitLab must remain deferred unless its dedicated feature flag is enabled")
 	}
+	if cfg.FeatureM3ACExecution {
+		t.Fatal("M3 execution must remain hidden until its feature flag is enabled")
+	}
+	if cfg.ACRequestTimeout != 10*time.Second {
+		t.Fatalf("AC request timeout = %s, want 10s", cfg.ACRequestTimeout)
+	}
 }
 
 func TestLoadRejectsPartialOIDCConfiguration(t *testing.T) {
@@ -126,5 +132,59 @@ func TestLoadValidatesGitLabConfigurationWhenFeatureIsEnabled(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected enabled GitLab feature to reject partial credentials")
+	}
+}
+
+func TestLoadRequiresAgentComposeEndpointWhenM3IsEnabled(t *testing.T) {
+	values := map[string]string{
+		"REPOMENDER_DATABASE_URL":            "postgres://example",
+		"REPOMENDER_FEATURE_M3_AC_EXECUTION": "true",
+	}
+	_, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err == nil {
+		t.Fatal("expected enabled M3 feature to require an Agent Compose endpoint")
+	}
+}
+
+func TestLoadAcceptsAgentComposeConfiguration(t *testing.T) {
+	values := map[string]string{
+		"REPOMENDER_DATABASE_URL":            "postgres://example",
+		"REPOMENDER_FEATURE_M3_AC_EXECUTION": "true",
+		"REPOMENDER_AC_BASE_URL":             "http://agent-compose:7410/",
+		"REPOMENDER_AC_AUTH_TOKEN":           "secret",
+		"REPOMENDER_AC_REQUIRED_VERSION":     "0",
+		"REPOMENDER_AC_REQUIRED_DRIVER":      "docker",
+		"REPOMENDER_AC_REQUEST_TIMEOUT":      "7",
+	}
+	cfg, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	if cfg.ACBaseURL != "http://agent-compose:7410" {
+		t.Fatalf("AC base URL = %q", cfg.ACBaseURL)
+	}
+	if cfg.ACRequestTimeout != 7*time.Second {
+		t.Fatalf("AC request timeout = %s", cfg.ACRequestTimeout)
+	}
+}
+
+func TestLoadRejectsInvalidAgentComposeEndpoint(t *testing.T) {
+	values := map[string]string{
+		"REPOMENDER_DATABASE_URL":            "postgres://example",
+		"REPOMENDER_FEATURE_M3_AC_EXECUTION": "true",
+		"REPOMENDER_AC_BASE_URL":             "file:///tmp/ac.sock",
+	}
+	_, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err == nil {
+		t.Fatal("expected non-HTTP Agent Compose endpoint to be rejected")
 	}
 }
