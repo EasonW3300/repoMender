@@ -2,11 +2,12 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
-// context controls deadlines and cancellation. These provider-neutral types
-// prevent task orchestration from depending on Agent Compose wire structures.
+// context controls deadlines and cancellation, while json.RawMessage preserves
+// schema-validated result JSON without base64 conversion at HTTP boundaries.
 
 type EventKind string
 
@@ -20,51 +21,51 @@ const (
 )
 
 type Request struct {
-	CorrelationID string
-	ProjectID     string
-	AgentName     string
-	Repository    string
-	CommitSHA     string
-	Prompt        string
-	Timeout       time.Duration
-	Policy        ResourcePolicy
+	CorrelationID string         `json:"correlationId"`
+	ProjectID     string         `json:"projectId"`
+	AgentName     string         `json:"agentName"`
+	Repository    string         `json:"repository"`
+	CommitSHA     string         `json:"commitSha"`
+	Prompt        string         `json:"prompt"`
+	Timeout       time.Duration  `json:"timeout"`
+	Policy        ResourcePolicy `json:"policy"`
 }
 
 type ResourcePolicy struct {
-	Driver         string
-	NetworkEnabled bool
-	Cleanup        string
+	Driver         string `json:"driver"`
+	NetworkEnabled bool   `json:"networkEnabled"`
+	Cleanup        string `json:"cleanup"`
 }
 
 type Run struct {
-	ID            string
-	CorrelationID string
-	StartedAt     time.Time
+	ID            string    `json:"id"`
+	CorrelationID string    `json:"correlationId"`
+	StartedAt     time.Time `json:"startedAt"`
 }
 
 type Event struct {
-	Sequence  uint64
-	RunID     string
-	Kind      EventKind
-	Stream    string
-	Message   string
-	CreatedAt time.Time
-	Terminal  bool
+	Sequence  uint64    `json:"sequence"`
+	RunID     string    `json:"runId"`
+	Kind      EventKind `json:"kind"`
+	Stream    string    `json:"stream,omitempty"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"createdAt"`
+	Terminal  bool      `json:"terminal"`
 }
 
 type Result struct {
-	SchemaVersion string
-	RunID         string
-	Status        string
-	Output        []byte
-	FinishedAt    time.Time
+	SchemaVersion string          `json:"schemaVersion"`
+	RunID         string          `json:"runId"`
+	Status        string          `json:"status"`
+	Output        json.RawMessage `json:"output"`
+	FinishedAt    time.Time       `json:"finishedAt"`
 }
 
 type VersionInfo struct {
-	Version         string
-	OS              string
-	Arch            string
-	CompiledDrivers []string
+	Version         string   `json:"version"`
+	OS              string   `json:"os"`
+	Arch            string   `json:"arch"`
+	CompiledDrivers []string `json:"compiledDrivers"`
 }
 
 type Adapter interface {

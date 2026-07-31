@@ -64,6 +64,13 @@ Requests carry an immutable commit SHA, repository identity, prompt, deadline,
 and resource policy. AC-specific messages are normalized to RepoMender event
 kinds before they can reach persistence or SSE.
 
+`StartRun` receives the immutable repository and commit in both the guarded
+prompt context and a versioned `payloadJson`. `FollowRunLogs` uses Connect's
+five-byte streaming envelope and exposes the AC byte offset as the reconnect
+sequence. A RepoMender deadline closes the stream and issues `StopRun`.
+`GetRun` results must contain a JSON `schemaVersion`; failed and cancelled runs
+are mapped before schema validation.
+
 The stable failure codes are:
 
 ```text
@@ -98,5 +105,12 @@ compiled_drivers=docker
 ```
 
 This confirms the health envelope and local runtime capability. A real Codex
-execution, cancellation, stream reconnection, redaction, and terminal SSE
-sequence remain required before the M3 acceptance gate can pass.
+run `46973800f0d9…` successfully exercised `StartRun`, ordered log streaming,
+and a terminal event. The run then failed because the AC sandbox could not
+reach `https://api.openai.com/v1/responses` without the host's local proxy.
+RepoMender maps that terminal outcome to `ac_agent_failed`.
+
+The M3 gate remains open until a real run succeeds and real cancellation is
+observed. Unit and HTTP fixtures already cover cancellation, deadline-driven
+`StopRun`, reconnect offsets, malformed frames, dropped streams, redaction,
+RBAC, CSRF, and stable SSE errors.

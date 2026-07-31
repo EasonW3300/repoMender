@@ -8,29 +8,34 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/EasonW3300/repoMender/server/internal/execution"
 )
 
-// json and net/http implement the small stable /api/version compatibility
-// contract without importing Agent Compose internals into RepoMender; the
-// parent execution package supplies the provider-neutral result type.
+// json and net/http implement the stable AC transport, while sync tracks
+// per-run deadlines without importing Agent Compose internals into RepoMender.
 
 var (
 	ErrUnavailable       = errors.New("ac_unavailable")
 	ErrRejected          = errors.New("ac_rejected")
 	ErrIncompatible      = errors.New("ac_incompatible")
 	ErrTimeout           = errors.New("ac_timeout")
+	ErrCancelled         = errors.New("ac_cancelled")
+	ErrSandboxFailed     = errors.New("ac_sandbox_failed")
+	ErrAgentFailed       = errors.New("ac_agent_failed")
 	ErrMalformedResponse = errors.New("ac_malformed_response")
+	ErrStreamDropped     = errors.New("ac_stream_dropped")
 )
 
 type Config struct {
-	BaseURL         string
-	AuthToken       string
-	RequiredVersion string
-	RequiredDriver  string
-	RequestTimeout  time.Duration
+	BaseURL           string
+	AuthToken         string
+	RequiredVersion   string
+	RequiredDriver    string
+	RequestTimeout    time.Duration
+	SensitivePatterns []string
 }
 
 type daemonVersionInfo struct {
@@ -55,6 +60,9 @@ type Client struct {
 	requiredVersion string
 	requiredDriver  string
 	httpClient      *http.Client
+	streamClient    *http.Client
+	redactor        *redactor
+	deadlines       sync.Map
 }
 
 func New(cfg Config) (*Client, error) {
@@ -70,6 +78,8 @@ func New(cfg Config) (*Client, error) {
 		requiredVersion: strings.TrimSpace(cfg.RequiredVersion),
 		requiredDriver:  strings.TrimSpace(cfg.RequiredDriver),
 		httpClient:      &http.Client{Timeout: cfg.RequestTimeout},
+		streamClient:    &http.Client{},
+		redactor:        newRedactor(append([]string{cfg.AuthToken}, cfg.SensitivePatterns...)),
 	}, nil
 }
 
@@ -87,8 +97,10 @@ func (c *Client) Health(ctx context.Context) (execution.VersionInfo, error) {
 	}
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
-			strings.Contains(err.Error(), "Client.Timeout") {
+		if errors.Is(err, context.Canceled) {
+			return execution.VersionInfo{}, fmt.Errorf("%w: %v", ErrCancelled, err)
+		}
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "Client.Timeout") {
 			return execution.VersionInfo{}, fmt.Errorf("%w: %v", ErrTimeout, err)
 		}
 		return execution.VersionInfo{}, fmt.Errorf("%w: %v", ErrUnavailable, err)

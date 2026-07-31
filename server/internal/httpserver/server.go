@@ -12,6 +12,7 @@ import (
 	"github.com/EasonW3300/repoMender/server/internal/auth"
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
+	"github.com/EasonW3300/repoMender/server/internal/execution"
 	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
 )
@@ -34,6 +35,7 @@ type Server struct {
 	auth         *auth.Service
 	oidc         auth.OIDCProvider
 	scm          *scm.Service
+	execution    execution.Adapter
 	cookieSecure bool
 }
 
@@ -57,10 +59,17 @@ func NewWithServices(
 	cookieSecure bool,
 	readiness ...ReadinessDependency,
 ) *Server {
-	return &Server{
+	server := &Server{
 		checker: checker, auth: service, oidc: provider, scm: scmService,
 		cookieSecure: cookieSecure, readiness: readiness,
 	}
+	for _, dependency := range readiness {
+		if adapter, ok := dependency.(execution.Adapter); ok {
+			server.execution = adapter
+			break
+		}
+	}
+	return server
 }
 
 func (s *Server) Handler() http.Handler {
@@ -86,6 +95,12 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/v1/repositories/{id}", s.repository)
 		mux.HandleFunc("POST /webhooks/github", s.githubWebhook)
 		mux.HandleFunc("POST /webhooks/gitlab", s.gitlabWebhook)
+	}
+	if s.auth != nil && s.execution != nil {
+		mux.HandleFunc("POST /api/v1/internal/executions", s.startExecution)
+		mux.HandleFunc("GET /api/v1/internal/executions/{id}/events", s.executionEvents)
+		mux.HandleFunc("GET /api/v1/internal/executions/{id}/result", s.executionResult)
+		mux.HandleFunc("POST /api/v1/internal/executions/{id}/cancel", s.cancelExecution)
 	}
 	return securityHeaders(mux)
 }
@@ -137,7 +152,7 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 		acClient, err := agentcompose.New(agentcompose.Config{
 			BaseURL: cfg.ACBaseURL, AuthToken: cfg.ACAuthToken,
 			RequiredVersion: cfg.ACRequiredVersion, RequiredDriver: cfg.ACRequiredDriver,
-			RequestTimeout: cfg.ACRequestTimeout,
+			RequestTimeout: cfg.ACRequestTimeout, SensitivePatterns: cfg.ACSensitivePatterns,
 		})
 		if err != nil {
 			return err

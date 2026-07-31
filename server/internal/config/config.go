@@ -44,6 +44,7 @@ type Config struct {
 	ACRequiredVersion    string
 	ACRequiredDriver     string
 	ACRequestTimeout     time.Duration
+	ACSensitivePatterns  []string
 }
 
 func Load() (Config, error) {
@@ -122,6 +123,7 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		ACRequiredVersion:    valueOrDefault(lookup, "REPOMENDER_AC_REQUIRED_VERSION", ""),
 		ACRequiredDriver:     valueOrDefault(lookup, "REPOMENDER_AC_REQUIRED_DRIVER", "docker"),
 		ACRequestTimeout:     durationOrDefault(lookup, "REPOMENDER_AC_REQUEST_TIMEOUT", 10*time.Second),
+		ACSensitivePatterns:  splitNonEmpty(valueOrDefault(lookup, "REPOMENDER_AC_SENSITIVE_PATTERNS", "")),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -237,4 +239,14 @@ func durationOrDefault(lookup func(string) (string, bool), key string, fallback 
 		return -1
 	}
 	return time.Duration(seconds) * time.Second
+}
+
+func splitNonEmpty(value string) []string {
+	var values []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			values = append(values, item)
+		}
+	}
+	return values
 }

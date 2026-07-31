@@ -170,6 +170,36 @@ Provider credentials are never exposed by the REST API. Persisted credentials
 use AES-256-GCM. Webhooks are verified before normalization, deduplicated by
 provider delivery ID, and published through the transactional Outbox.
 
+## Configure Agent Compose execution
+
+M3 remains disabled until its acceptance gate passes. Apply the non-sensitive
+Codex project template to an independently running AC daemon:
+
+```bash
+agent-compose up \
+  --host http://127.0.0.1:7410 \
+  --file deploy/agent-compose.repomender.yml
+```
+
+Codex authentication and model credentials must be configured only in Agent
+Compose. Then configure RepoMender:
+
+```text
+REPOMENDER_FEATURE_M3_AC_EXECUTION=true
+REPOMENDER_AC_BASE_URL=http://host.docker.internal:7410
+REPOMENDER_AC_AUTH_TOKEN=
+REPOMENDER_AC_REQUIRED_VERSION=
+REPOMENDER_AC_REQUIRED_DRIVER=docker
+REPOMENDER_AC_REQUEST_TIMEOUT=10
+REPOMENDER_AC_SENSITIVE_PATTERNS=
+```
+
+When enabled, AC health and compatibility participate in `/health/ready` while
+`/health/live` remains independent. Administrators and maintainers can open
+the deliberately unlinked internal route `/runs/diagnostic` to start one
+immutable-commit smoke run, inspect ordered SSE output, or request
+cancellation. The route does not create M4 task or audit records.
+
 Stop the stack without deleting its database:
 
 ```bash
