@@ -103,13 +103,19 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 		if err != nil {
 			return err
 		}
-		gitlab := scm.NewGitLabAdapter(scm.GitLabConfig{
-			ClientID: cfg.GitLabClientID, ClientSecret: cfg.GitLabClientSecret,
-			WebhookSecret: cfg.GitLabWebhookSecret,
-			RedirectURL:   strings.TrimRight(cfg.PublicURL, "/") + "/api/v1/scm/gitlab/callback",
-			APIBaseURL:    cfg.GitLabAPIBaseURL, WebBaseURL: cfg.GitLabWebBaseURL,
-		}, nil)
-		scmService = scm.NewService(scm.NewPostgreSQLStore(db), box, github, gitlab)
+		adapters := []scm.Adapter{github}
+		if cfg.FeatureGitLab {
+			// GitLab remains compiled and contract-tested, but only joins the
+			// runtime adapter registry when its dedicated deferred flag is enabled.
+			gitlab := scm.NewGitLabAdapter(scm.GitLabConfig{
+				ClientID: cfg.GitLabClientID, ClientSecret: cfg.GitLabClientSecret,
+				WebhookSecret: cfg.GitLabWebhookSecret,
+				RedirectURL:   strings.TrimRight(cfg.PublicURL, "/") + "/api/v1/scm/gitlab/callback",
+				APIBaseURL:    cfg.GitLabAPIBaseURL, WebBaseURL: cfg.GitLabWebBaseURL,
+			}, nil)
+			adapters = append(adapters, gitlab)
+		}
+		scmService = scm.NewService(scm.NewPostgreSQLStore(db), box, adapters...)
 	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,

@@ -19,27 +19,30 @@ SCM event
   → Agent Compose governed execution
   → structured findings and evidence
   → human approval where required
-  → GitHub/GitLab status, comment, or draft patch
+  → GitHub status, comment, or draft patch
 ```
 
-The first release supports GitHub.com and GitLab.com in a self-hosted,
+The active first-release scope supports GitHub.com in a self-hosted,
 single-tenant deployment. Codex is the mandatory Agent provider for acceptance.
-Automatic merge, direct writes to protected branches, multi-tenancy, billing,
-GHES, and GitLab Self-Managed are outside the first-release scope.
+GitLab code already implemented in M2 is preserved behind
+`REPOMENDER_FEATURE_GITLAB=false` for later development, but it is not exposed
+or required by the current M2-M9 gates. Automatic merge, direct writes to
+protected branches, multi-tenancy, billing, and GHES are outside the
+first-release scope.
 
 ## Current delivery status
 
 The repository follows sequential MVP gates. Modules M0 and M1 provide the
 engineering foundation and identity boundary. M2 is implemented behind its
-feature flag. Its real GitHub.com smoke test has passed; the real GitLab.com
-smoke test remains before the M2 gate can close. Later modules remain disabled
-until their own acceptance gates pass.
+feature flag and its required real GitHub.com smoke test has passed. GitLab is
+deferred without deleting its adapter or regression coverage. Later modules
+remain disabled until their own acceptance gates pass.
 
 | Module | Status |
 | --- | --- |
 | M0 · Engineering foundation | Gate passed |
 | M1 · Identity and access | Gate passed |
-| M2 · SCM and repositories | Implemented; GitHub smoke passed, GitLab smoke pending |
+| M2 · SCM and repositories | GitHub-only scope implemented and real smoke passed; remote CI/merge pending |
 | M3 · Agent Compose execution adapter | Not started |
 | M4 · Task and audit core | Not started |
 | M5 · Code review | Not started |
@@ -61,7 +64,7 @@ Browser
        ├─ Vinext web
        └─ Go API / worker
             ├─ PostgreSQL
-            ├─ GitHub.com / GitLab.com
+            ├─ GitHub.com
             └─ Agent Compose daemon (M3)
                  └─ Codex Agent sandbox
 ```
@@ -73,8 +76,8 @@ concurrently. PostgreSQL also provides the transactional Outbox and MVP job
 queue, avoiding a Redis or message-broker dependency.
 
 SCM and Agent Compose integrations are defined behind provider-neutral adapter
-boundaries. Business logic must not depend directly on GitHub, GitLab, or Agent
-provider SDKs.
+boundaries. Business logic must not depend directly on GitHub or Agent provider
+SDKs. The preserved GitLab adapter follows the same boundary while deferred.
 
 ## Start the stack
 
@@ -110,17 +113,15 @@ The OIDC implementation uses Authorization Code with PKCE. The local
 administrator remains available as an emergency fallback when discovery or
 token exchange fails.
 
-## Configure SCM providers
+## Configure GitHub SCM
 
-M2 supports GitHub.com through a GitHub App and GitLab.com through an OAuth
-Application. Enable its server routes and provide the encryption key:
+M2's active scope supports GitHub.com through a GitHub App. Enable its server
+routes and provide the encryption key:
 
 ```text
 REPOMENDER_FEATURE_M2_SCM=true
 REPOMENDER_MASTER_KEY=<32 random bytes encoded with standard base64>
 ```
-
-### GitHub.com
 
 Create a GitHub App with these URLs, replacing `https://repomender.example.com`
 with the externally reachable RepoMender origin:
@@ -151,38 +152,23 @@ The real GitHub M2 smoke test uses the private
 [repomender-sandbox](https://github.com/EasonW3300/repomender-sandbox)
 repository. The GitHub App is restricted to that repository.
 
-### GitLab.com
+GitLab support is intentionally dormant. Its adapter, database compatibility,
+OAuth implementation, webhook verification, and protocol fixtures remain in
+the repository. `REPOMENDER_FEATURE_GITLAB` defaults to `false`; do not enable
+it in the current release. A later scoped module can restore real-provider
+acceptance without rebuilding the M2 foundation.
 
-Create a GitLab OAuth Application with:
-
-```text
-Redirect URI: https://repomender.example.com/api/v1/scm/gitlab/callback
-```
-
-Then configure:
-
-```text
-REPOMENDER_GITLAB_CLIENT_ID
-REPOMENDER_GITLAB_CLIENT_SECRET
-REPOMENDER_GITLAB_WEBHOOK_SECRET
-```
-
-The GitLab.com real-provider smoke test is still pending. M2 must not be tagged
-as complete and M3 must not begin until that test passes.
-
-Once signed in as an administrator, open `/repositories` to connect providers.
+Once signed in as an administrator, open `/repositories` to connect GitHub.
 Administrators and maintainers can resynchronize snapshots. All authenticated
 roles can inspect connected repositories. Webhooks are accepted at:
 
 ```text
 POST /webhooks/github
-POST /webhooks/gitlab
 ```
 
-Provider credentials are never exposed by the REST API. Persisted secrets and
-GitLab tokens are encrypted with AES-256-GCM. Webhooks are verified before
-normalization, deduplicated by provider delivery ID, and published through the
-transactional Outbox.
+Provider credentials are never exposed by the REST API. Persisted credentials
+use AES-256-GCM. Webhooks are verified before normalization, deduplicated by
+provider delivery ID, and published through the transactional Outbox.
 
 Stop the stack without deleting its database:
 
@@ -213,8 +199,9 @@ Acceptance evidence is recorded in:
 - [M02 SCM and repositories](docs/acceptance/M02.md)
 
 M2's clean-stack fixture smoke environment is defined in
-`compose.scm-smoke.yaml`. It validates both provider protocols without placing
-real provider credentials or private keys in the repository.
+`compose.scm-smoke.yaml`. It validates GitHub and keeps the deferred GitLab
+protocol under regression coverage without placing real provider credentials
+or private keys in the repository.
 
 ## Configuration
 

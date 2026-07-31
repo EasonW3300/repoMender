@@ -73,5 +73,6 @@ test("source keeps navigation, approval, and accessibility behaviors wired", asy
   assert.match(app, /\/api\/v1\/repositories/);
   assert.match(app, /Install GitHub App/);
   assert.match(app, /Connect GitLab/);
+  assert.match(app, /providers\.gitlab \?/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });

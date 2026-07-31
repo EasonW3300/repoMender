@@ -38,6 +38,8 @@ services:
       REPOMENDER_GITHUB_WEBHOOK_SECRET: github-smoke-secret
       REPOMENDER_GITHUB_API_BASE_URL: http://host.docker.internal:19090/github
       REPOMENDER_GITHUB_WEB_BASE_URL: http://host.docker.internal:19090/github
+      # Keep the deferred adapter under protocol regression coverage.
+      REPOMENDER_FEATURE_GITLAB: "true"
       REPOMENDER_GITLAB_CLIENT_ID: gitlab-smoke-client
       REPOMENDER_GITLAB_CLIENT_SECRET: gitlab-smoke-client-secret
       REPOMENDER_GITLAB_WEBHOOK_SECRET: gitlab-smoke-secret

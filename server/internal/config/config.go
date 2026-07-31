@@ -22,6 +22,7 @@ type Config struct {
 	OIDCClientID         string
 	OIDCClientSecret     string
 	FeatureM2SCM         bool
+	FeatureGitLab        bool
 	SCMMasterKey         []byte
 	GitHubAppID          int64
 	GitHubAppSlug        string
@@ -61,6 +62,10 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	featureGitLab, err := boolOrDefault(lookup, "REPOMENDER_FEATURE_GITLAB", false)
+	if err != nil {
+		return Config{}, err
+	}
 	masterKey, err := decodeBase64Value(lookup, "REPOMENDER_MASTER_KEY")
 	if err != nil {
 		return Config{}, err
@@ -85,6 +90,7 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		OIDCClientID:         valueOrDefault(lookup, "REPOMENDER_OIDC_CLIENT_ID", ""),
 		OIDCClientSecret:     valueOrDefault(lookup, "REPOMENDER_OIDC_CLIENT_SECRET", ""),
 		FeatureM2SCM:         featureM2SCM,
+		FeatureGitLab:        featureGitLab,
 		SCMMasterKey:         masterKey,
 		GitHubAppID:          githubAppID,
 		GitHubAppSlug:        valueOrDefault(lookup, "REPOMENDER_GITHUB_APP_SLUG", ""),
@@ -127,11 +133,15 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if partiallyConfigured(githubValues) {
 		return Config{}, errors.New("GitHub App ID, slug, private key, and webhook secret must be configured together")
 	}
-	gitlabValues := []bool{
-		cfg.GitLabClientID != "", cfg.GitLabClientSecret != "", cfg.GitLabWebhookSecret != "",
-	}
-	if partiallyConfigured(gitlabValues) {
-		return Config{}, errors.New("GitLab client ID, client secret, and webhook secret must be configured together")
+	if cfg.FeatureGitLab {
+		// Dormant GitLab values are intentionally ignored while the provider is
+		// deferred. Enabling the feature restores strict all-or-nothing validation.
+		gitlabValues := []bool{
+			cfg.GitLabClientID != "", cfg.GitLabClientSecret != "", cfg.GitLabWebhookSecret != "",
+		}
+		if partiallyConfigured(gitlabValues) {
+			return Config{}, errors.New("GitLab client ID, client secret, and webhook secret must be configured together")
+		}
 	}
 
 	return cfg, nil

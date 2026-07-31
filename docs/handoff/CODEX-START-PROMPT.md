@@ -15,7 +15,8 @@ documents:
 - docs/roadmap/M03-M09.md
 
 Treat Git and acceptance records as authoritative; do not rely on prior chat
-history. Do not start M3 until M2's real GitLab.com smoke, CI, merge, and
+history. The active scope is GitHub-only; preserve GitLab code but keep
+REPOMENDER_FEATURE_GITLAB=false. Do not start M3 until M2 CI, merge, and the
 m2-scm-repositories-mvp tag are complete.
 
 Work strictly one module at a time. For every module:

@@ -15,6 +15,9 @@ func TestLoadUsesValidatedDefaults(t *testing.T) {
 	if cfg.HTTPAddress != ":8080" || cfg.ShutdownTimeout != 10*time.Second || cfg.WorkerPoll != 2*time.Second || cfg.SessionTTL != 8*time.Hour {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
+	if cfg.FeatureGitLab {
+		t.Fatal("GitLab must remain deferred unless its dedicated feature flag is enabled")
+	}
 }
 
 func TestLoadRejectsPartialOIDCConfiguration(t *testing.T) {
@@ -91,5 +94,37 @@ func TestLoadRejectsPartialSCMProviderConfiguration(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected partial GitHub App configuration error")
+	}
+}
+
+func TestLoadIgnoresDormantPartialGitLabConfiguration(t *testing.T) {
+	values := map[string]string{
+		"REPOMENDER_DATABASE_URL":     "postgres://example",
+		"REPOMENDER_GITLAB_CLIENT_ID": "preserved-client-id",
+	}
+	cfg, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err != nil {
+		t.Fatalf("deferred GitLab configuration blocked startup: %v", err)
+	}
+	if cfg.FeatureGitLab {
+		t.Fatal("GitLab unexpectedly enabled")
+	}
+}
+
+func TestLoadValidatesGitLabConfigurationWhenFeatureIsEnabled(t *testing.T) {
+	values := map[string]string{
+		"REPOMENDER_DATABASE_URL":     "postgres://example",
+		"REPOMENDER_FEATURE_GITLAB":   "true",
+		"REPOMENDER_GITLAB_CLIENT_ID": "partial-client-id",
+	}
+	_, err := load(func(key string) (string, bool) {
+		value, ok := values[key]
+		return value, ok
+	})
+	if err == nil {
+		t.Fatal("expected enabled GitLab feature to reject partial credentials")
 	}
 }

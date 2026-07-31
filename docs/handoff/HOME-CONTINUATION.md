@@ -1,6 +1,6 @@
 # Home development handoff
 
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 This document is the source of truth for continuing RepoMender on another
 computer. It intentionally contains no passwords, tokens, webhook secrets,
@@ -14,7 +14,7 @@ OAuth secrets, private keys, session cookies, or model credentials.
 - Latest completed gates on `main`: M0 and M1
 - Current work: M2 implementation is pushed to the active branch.
 - M2 real GitHub.com smoke: passed.
-- M2 real GitLab.com smoke: pending.
+- GitLab implementation: preserved but deferred behind a default-off flag.
 - M3 must not start until M2 is fully accepted, merged, and tagged
   `m2-scm-repositories-mvp`.
 
@@ -78,7 +78,7 @@ The following office-computer state is deliberately excluded:
 | `.env.github-compose.yaml` | Recreate from `deploy/github-app/compose.override.example.yaml`. |
 | GitHub App PEM private key | Generate a new key or transfer it through an approved secret manager; never commit it. |
 | GitHub webhook secret | Set a new random value in GitHub App settings and the home `.env`. |
-| GitLab OAuth client secret | Create/store it locally or in an approved secret manager. |
+| GitLab OAuth client secret | Not required while GitLab remains deferred. |
 | OIDC client secret | Recreate locally; the committed Dex smoke credentials are test-only. |
 | Local administrator password | Bootstrap a new administrator on the new database. |
 | PostgreSQL Docker volume | Start with a blank database and rerun migrations. |
@@ -121,22 +121,16 @@ configuration. That is expected if the office computer is no longer used.
 
 ## Finish M2 before M3
 
-The real GitLab.com acceptance remains the only provider gate blocker:
+The required GitHub real-provider smoke has passed. GitLab is explicitly
+deferred and no longer blocks M2. The remaining repository gates are:
 
-1. Create a dedicated private GitLab.com sandbox project.
-2. Create a GitLab OAuth Application whose callback is
-   `/api/v1/scm/gitlab/callback` on the current HTTPS origin.
-3. Configure a project webhook to `/webhooks/gitlab`.
-4. Connect the provider through RepoMender and synchronize the project.
-5. Produce one genuine GitLab delivery.
-6. Verify a forged token and a repeated delivery are rejected or deduplicated.
-7. Record URLs, delivery identifiers, commands, and results in
-   `docs/acceptance/M02.md` without recording secrets.
-8. Run `make m2-verify` and the clean-stack smoke test.
-9. Push the branch, open/update the PR, wait for all GitHub Actions jobs, merge
-   to `main`, and create tag `m2-scm-repositories-mvp`.
+1. Run `make m2-verify` and the clean-stack smoke test.
+2. Commit and push the GitLab deferral change.
+3. Open/update the M2 PR and wait for all GitHub Actions jobs.
+4. Merge to `main`.
+5. Tag the merge commit `m2-scm-repositories-mvp`.
 
-Only after all nine steps pass may M3 begin.
+Only after all five steps pass may M3 begin.
 
 ## Development discipline for M3-M9
 
@@ -146,6 +140,8 @@ Only after all nine steps pass may M3 begin.
   `feature/m9-automation-management`.
 - Write failing tests before implementation changes.
 - Keep provider-specific code behind adapters.
+- Keep `REPOMENDER_FEATURE_GITLAB=false`; preserved GitLab code is not part of
+  M3-M9 acceptance until a later scope decision reactivates it.
 - Add migrations with rollback and concurrency coverage.
 - Preserve RBAC, CSRF, webhook verification, encryption, redaction, and audit
   boundaries introduced by M1 and M2.
