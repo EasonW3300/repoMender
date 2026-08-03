@@ -22,6 +22,29 @@ type TaskProcessor interface {
 	Process(context.Context, tasks.Task, tasks.Run) (status tasks.Status, code, message string)
 }
 
+type CoreProcessor struct {
+	service *tasks.Service
+}
+
+// NewCoreProcessor is the M4-only processor. It persists the claim event and
+// pauses the task for a later business module instead of pretending to perform
+// code review, CI diagnosis, or issue repair before those modules are enabled.
+func NewCoreProcessor(service *tasks.Service) CoreProcessor {
+	return CoreProcessor{service: service}
+}
+
+func (p CoreProcessor) Process(ctx context.Context, task tasks.Task, run tasks.Run) (tasks.Status, string, string) {
+	if p.service == nil {
+		return tasks.StatusFailed, "m4_processor_unavailable", "M4 task processor is unavailable"
+	}
+	if _, err := p.service.AppendEvent(ctx, run.ID, tasks.RunEventInput{
+		Kind: "status", Message: "M4 worker claimed task; business processor pending",
+	}); err != nil {
+		return tasks.StatusFailed, "m4_event_persist_failed", err.Error()
+	}
+	return tasks.StatusAwaitingApproval, "", "business processor pending"
+}
+
 // RunQueue claims at most one task per poll, processes it, and commits exactly
 // one terminal state. A lack of work is normal; all other queue errors stop the
 // process so orchestration can restart it without silently dropping work.

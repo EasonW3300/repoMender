@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
 	"github.com/EasonW3300/repoMender/server/internal/httpserver"
+	"github.com/EasonW3300/repoMender/server/internal/tasks"
 	"github.com/EasonW3300/repoMender/server/internal/worker"
 )
 
@@ -54,6 +56,15 @@ func run(args []string) error {
 		if err := database.MigrateUp(ctx, db); err != nil {
 			return fmt.Errorf("migrate database: %w", err)
 		}
+		if cfg.FeatureM4Tasks {
+			service := tasks.NewService(tasks.NewPostgreSQLStore(db))
+			lease := cfg.WorkerPoll * 3
+			if lease < 5*time.Second {
+				lease = 5 * time.Second
+			}
+			return worker.RunQueue(ctx, cfg.WorkerPoll, lease, workerOwner(), service,
+				worker.NewCoreProcessor(service))
+		}
 		return worker.Run(ctx, cfg, db)
 	case "migrate":
 		direction := "up"
@@ -72,4 +83,12 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func workerOwner() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown-host"
+	}
+	return fmt.Sprintf("%s:%d", host, os.Getpid())
 }
