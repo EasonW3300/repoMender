@@ -95,7 +95,7 @@ an AC outage.
 
 ## Verified local daemon
 
-On 2026-07-31, the local daemon at `127.0.0.1:7410` returned:
+On 2026-08-03, the local daemon at `127.0.0.1:7410` returned:
 
 ```text
 version=0
@@ -104,20 +104,23 @@ arch=arm64
 compiled_drivers=docker
 ```
 
-This confirms the health envelope and local runtime capability. A real Codex
-run `46973800f0d9…` successfully exercised `StartRun`, ordered log streaming,
-and a terminal event. The run then failed because the AC sandbox could not
-reach `https://api.openai.com/v1/responses` without the host's local proxy.
-RepoMender maps that terminal outcome to `ac_agent_failed`.
+This confirms the health envelope and local runtime capability. Earlier real
+runs `46973800f0d9…` and `b97d4d9eecbd…` exercised ordered streaming,
+terminal failure mapping, and cancellation. Those runs also documented the
+failure mode when the AC sandbox cannot reach an external model gateway
+without an approved egress path.
 
-An explicitly authorized temporary proxy bridge proved outbound transport and
-changed the real failure to OpenAI HTTP 401, confirming the AC control plane
-still needs an OpenAI-family credential. Real run `b97d4d9eecbd…` then proved
-`StopRun`, persisted cancellation, a terminal SSE event, and
-`ac_cancelled` result mapping. The bridge and temporary Agent proxy variables
-were removed afterward.
+After the AC provider was configured for the official DeepSeek Responses
+endpoint and the user authorized the smoke payload, run
+`704de22a8d3977987ab3e22ddd46ed9813990d2bf67731052960613c33d15cb7` completed
+successfully. RepoMender received ordered log and terminal events, AC
+persisted `RUN_STATUS_SUCCEEDED`, and the adapter returned a schema-valid
+`v1` result. The adapter accepts AC agent output after provider/runtime
+preambles and rejects extra result fields.
 
-The M3 gate remains open until a real run succeeds. Unit and HTTP fixtures
-cover cancellation, deadline-driven
-`StopRun`, reconnect offsets, malformed frames, dropped streams, redaction,
-RBAC, CSRF, and stable SSE errors.
+The temporary proxy bridge and Agent proxy variables were removed afterward.
+The M3 gate is therefore open only for the durable approved AC egress path and
+final deployment/security review; it is not blocked on the execution contract
+or the real local smoke. Unit and HTTP fixtures cover cancellation,
+deadline-driven `StopRun`, reconnect offsets, malformed frames, dropped
+streams, redaction, RBAC, CSRF, and stable SSE errors.
