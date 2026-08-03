@@ -518,8 +518,133 @@ function AutomationsPage({ showToast }: { showToast: (message: string) => void }
   );
 }
 
-function RunsPage({ navigate }: { navigate: (route: string) => void }) {
-  return <ListPage title="Runs" description="Execution history mapped to AC runs and isolated sandboxes." navigate={navigate} />;
+function RunsPage() {
+  return (
+    <>
+      <PageHeader
+        eyebrow="Agent Compose"
+        title="Runs"
+        description="Execution history mapped to AC runs and isolated sandboxes."
+      />
+      <section className="panel">
+        <div className="panel-heading"><div><span className="eyebrow">M4 boundary</span><h2>Persistent run history is not enabled yet</h2></div></div>
+        <div className="empty-state"><strong>M3 exposes only a controlled diagnostic.</strong><span>Task queues, retry history, and durable run records remain hidden until the M4 gate passes.</span></div>
+      </section>
+    </>
+  );
+}
+
+type DiagnosticEvent = {
+  sequence: number;
+  runId: string;
+  kind: string;
+  message: string;
+  terminal: boolean;
+};
+
+function csrfCookie(): string {
+  const value = document.cookie.split("; ").find((item) => item.startsWith("repomender_csrf="));
+  return value ? decodeURIComponent(value.slice("repomender_csrf=".length)) : "";
+}
+
+function ExecutionDiagnosticPage({ navigate }: { navigate: (route: string) => void }) {
+  const [form, setForm] = useState({
+    projectId: "", agentName: "codex", repository: "", commitSha: "",
+    prompt: "Inspect the pinned repository revision and return a concise M3 diagnostic result.",
+    timeoutSeconds: 600, driver: "docker",
+  });
+  const [runId, setRunId] = useState("");
+  const [events, setEvents] = useState<DiagnosticEvent[]>([]);
+  const [message, setMessage] = useState("");
+  const [pending, setPending] = useState(false);
+
+  // The diagnostic streams directly from the guarded M3 endpoint. EventSource
+  // reconnect offsets are encoded by the backend and no M4 task state is faked.
+  const start = async (event: FormEvent) => {
+    event.preventDefault();
+    setPending(true);
+    setMessage("");
+    setEvents([]);
+    try {
+      const response = await fetch("/api/v1/internal/executions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfCookie() },
+        body: JSON.stringify({
+          ...form,
+          correlationId: window.crypto.randomUUID(),
+          timeoutSeconds: Number(form.timeoutSeconds),
+          networkEnabled: false,
+        }),
+      });
+      const body = await response.json().catch(() => ({ error: "ac_execution_failed" }));
+      if (!response.ok) {
+        setMessage(response.status === 404 ? "M3 execution is disabled on this deployment." : `Execution rejected: ${body.error}`);
+        return;
+      }
+      const id = String(body.run.id);
+      setRunId(id);
+      const source = new EventSource(`/api/v1/internal/executions/${encodeURIComponent(id)}/events`);
+      const receive = (streamEvent: MessageEvent) => {
+        const item = JSON.parse(streamEvent.data) as DiagnosticEvent;
+        setEvents((current) => [...current.slice(-499), item]);
+        if (item.terminal) {
+          source.close();
+          setMessage(`Run ${item.message}.`);
+        }
+      };
+      ["started", "status", "log", "test", "agent_activity", "completed"].forEach((kind) => source.addEventListener(kind, receive as EventListener));
+      source.addEventListener("error", (streamEvent) => {
+        const payload = streamEvent instanceof MessageEvent ? JSON.parse(streamEvent.data) : { error: "ac_stream_dropped" };
+        setMessage(`Stream stopped: ${payload.error}`);
+        source.close();
+      });
+    } catch {
+      setMessage("RepoMender API is unavailable.");
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const cancel = async () => {
+    if (!runId) return;
+    const response = await fetch(`/api/v1/internal/executions/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfCookie() },
+      body: JSON.stringify({ reason: "operator requested from diagnostic UI" }),
+    });
+    setMessage(response.ok ? "Cancellation requested." : "Cancellation could not be requested.");
+  };
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Internal · M3 acceptance"
+        title="Agent Compose execution diagnostic"
+        description="Start one governed Codex run against an immutable repository commit. This page does not create an M4 task."
+        actions={<><button className="secondary-button" onClick={() => navigate("/runs")}>Back to runs</button><button className="danger-button" disabled={!runId} onClick={() => void cancel()}>Cancel run</button></>}
+      />
+      <div className="diagnosis-grid">
+        <section className="panel">
+          <div className="panel-heading"><div><span className="eyebrow">Immutable input</span><h2>Diagnostic request</h2></div><Status tone="warning">Network disabled</Status></div>
+          <form className="form-grid" onSubmit={start}>
+            <label className="full-field">AC project ID<input required value={form.projectId} onChange={(event) => setForm({ ...form, projectId: event.target.value })} /></label>
+            <label>Agent name<input required value={form.agentName} onChange={(event) => setForm({ ...form, agentName: event.target.value })} /></label>
+            <label>Driver<input required value={form.driver} onChange={(event) => setForm({ ...form, driver: event.target.value })} /></label>
+            <label className="full-field">Repository clone URL<input type="url" required value={form.repository} onChange={(event) => setForm({ ...form, repository: event.target.value })} /></label>
+            <label className="full-field">Full commit SHA<input required minLength={40} maxLength={64} value={form.commitSha} onChange={(event) => setForm({ ...form, commitSha: event.target.value })} /></label>
+            <label>Timeout seconds<input type="number" min={30} max={7200} required value={form.timeoutSeconds} onChange={(event) => setForm({ ...form, timeoutSeconds: Number(event.target.value) })} /></label>
+            <label className="full-field">Prompt<textarea rows={5} required value={form.prompt} onChange={(event) => setForm({ ...form, prompt: event.target.value })} /></label>
+            <button className="primary-button" disabled={pending}>{pending ? "Starting…" : "Start diagnostic"}</button>
+          </form>
+          {message ? <div className="identity-message" role="status">{message}</div> : null}
+        </section>
+        <section className="panel">
+          <div className="panel-heading"><div><span className="eyebrow">Ordered SSE</span><h2>{runId ? `Run ${runId.slice(0, 12)}` : "Waiting for a run"}</h2></div><Status tone={events.some((item) => item.terminal) ? "success" : runId ? "info" : "neutral"}>{events.length} events</Status></div>
+          <pre className="log-viewer">{events.length ? events.map((item) => `${item.sequence.toString().padStart(6, "0")}  ${item.kind.padEnd(15)} ${item.message}`).join("\n") : "Status, logs, tests, Agent activity, and the terminal event will appear here."}</pre>
+        </section>
+      </div>
+    </>
+  );
 }
 
 function SettingsPage() {
@@ -676,7 +801,8 @@ export function RepoMenderApp() {
     if (pathname === "/repositories") return <RepositoriesPage navigate={navigate} />;
     if (pathname.startsWith("/repositories/")) return <RepositoryDetail id={decodeURIComponent(pathname.slice("/repositories/".length))} navigate={navigate} />;
     if (pathname === "/automations") return <AutomationsPage showToast={showToast} />;
-    if (pathname === "/runs") return <RunsPage navigate={navigate} />;
+    if (pathname === "/runs") return <RunsPage />;
+    if (pathname === "/runs/diagnostic") return <ExecutionDiagnosticPage navigate={navigate} />;
     if (pathname === "/settings") return <SettingsPage />;
     return <Dashboard navigate={navigate} />;
   };

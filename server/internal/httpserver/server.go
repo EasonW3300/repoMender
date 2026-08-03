@@ -12,26 +12,39 @@ import (
 	"github.com/EasonW3300/repoMender/server/internal/auth"
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
+	"github.com/EasonW3300/repoMender/server/internal/execution"
+	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
 )
 
 // auth supplies identity controls, database constructs PostgreSQL stores, and
-// scm exposes provider-neutral repository and webhook orchestration.
+// execution/agentcompose supplies the external runtime readiness dependency,
+// while scm exposes provider-neutral repository and webhook orchestration.
 
 type HealthChecker interface {
 	Ping(context.Context) error
 }
 
+type ReadinessDependency interface {
+	Check(context.Context) error
+}
+
 type Server struct {
 	checker      HealthChecker
+	readiness    []ReadinessDependency
 	auth         *auth.Service
 	oidc         auth.OIDCProvider
 	scm          *scm.Service
+	execution    execution.Adapter
 	cookieSecure bool
 }
 
 func New(checker HealthChecker) *Server {
 	return &Server{checker: checker}
+}
+
+func NewWithReadiness(checker HealthChecker, dependencies ...ReadinessDependency) *Server {
+	return &Server{checker: checker, readiness: dependencies}
 }
 
 func NewWithAuth(checker HealthChecker, service *auth.Service, provider auth.OIDCProvider, cookieSecure bool) *Server {
@@ -44,8 +57,19 @@ func NewWithServices(
 	provider auth.OIDCProvider,
 	scmService *scm.Service,
 	cookieSecure bool,
+	readiness ...ReadinessDependency,
 ) *Server {
-	return &Server{checker: checker, auth: service, oidc: provider, scm: scmService, cookieSecure: cookieSecure}
+	server := &Server{
+		checker: checker, auth: service, oidc: provider, scm: scmService,
+		cookieSecure: cookieSecure, readiness: readiness,
+	}
+	for _, dependency := range readiness {
+		if adapter, ok := dependency.(execution.Adapter); ok {
+			server.execution = adapter
+			break
+		}
+	}
+	return server
 }
 
 func (s *Server) Handler() http.Handler {
@@ -71,6 +95,12 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/v1/repositories/{id}", s.repository)
 		mux.HandleFunc("POST /webhooks/github", s.githubWebhook)
 		mux.HandleFunc("POST /webhooks/gitlab", s.gitlabWebhook)
+	}
+	if s.auth != nil && s.execution != nil {
+		mux.HandleFunc("POST /api/v1/internal/executions", s.startExecution)
+		mux.HandleFunc("GET /api/v1/internal/executions/{id}/events", s.executionEvents)
+		mux.HandleFunc("GET /api/v1/internal/executions/{id}/result", s.executionResult)
+		mux.HandleFunc("POST /api/v1/internal/executions/{id}/cancel", s.cancelExecution)
 	}
 	return securityHeaders(mux)
 }
@@ -117,9 +147,21 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 		}
 		scmService = scm.NewService(scm.NewPostgreSQLStore(db), box, adapters...)
 	}
+	var readiness []ReadinessDependency
+	if cfg.FeatureM3ACExecution {
+		acClient, err := agentcompose.New(agentcompose.Config{
+			BaseURL: cfg.ACBaseURL, AuthToken: cfg.ACAuthToken,
+			RequiredVersion: cfg.ACRequiredVersion, RequiredDriver: cfg.ACRequiredDriver,
+			RequestTimeout: cfg.ACRequestTimeout, SensitivePatterns: cfg.ACSensitivePatterns,
+		})
+		if err != nil {
+			return err
+		}
+		readiness = append(readiness, acClient)
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           NewWithServices(db, service, provider, scmService, cfg.CookieSecure).Handler(),
+		Handler:           NewWithServices(db, service, provider, scmService, cfg.CookieSecure, readiness...).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -310,6 +352,15 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 			"status":  "not_ready",
 		})
 		return
+	}
+	for _, dependency := range s.readiness {
+		if err := dependency.Check(r.Context()); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"service": "repomender-api",
+				"status":  "not_ready",
+			})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"service": "repomender-api",

@@ -16,6 +16,14 @@ func (f fakeChecker) Ping(context.Context) error {
 	return f.err
 }
 
+type fakeReadinessDependency struct {
+	err error
+}
+
+func (f fakeReadinessDependency) Check(context.Context) error {
+	return f.err
+}
+
 func TestLiveDoesNotDependOnDatabase(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/health/live", nil)
 	response := httptest.NewRecorder()
@@ -48,5 +56,23 @@ func TestReadyReflectsDatabaseState(t *testing.T) {
 				t.Fatalf("status = %d, want %d", response.Code, test.want)
 			}
 		})
+	}
+}
+
+func TestReadyReflectsAgentComposeWithoutChangingLiveness(t *testing.T) {
+	server := NewWithReadiness(fakeChecker{}, fakeReadinessDependency{err: errors.New("AC offline")})
+
+	readyRequest := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	readyResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(readyResponse, readyRequest)
+	if readyResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("ready status = %d, want %d", readyResponse.Code, http.StatusServiceUnavailable)
+	}
+
+	liveRequest := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	liveResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(liveResponse, liveRequest)
+	if liveResponse.Code != http.StatusOK {
+		t.Fatalf("live status = %d, want %d", liveResponse.Code, http.StatusOK)
 	}
 }

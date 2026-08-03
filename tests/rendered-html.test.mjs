@@ -42,7 +42,7 @@ test("server-renders the RepoMender dashboard", async () => {
 });
 
 test("direct product routes preserve the application shell", async () => {
-  for (const pathname of ["/reviews", "/diagnostics/pg16", "/repairs/731", "/repositories", "/repositories/test-id", "/settings", "/login"]) {
+  for (const pathname of ["/reviews", "/diagnostics/pg16", "/repairs/731", "/repositories", "/repositories/test-id", "/runs/diagnostic", "/settings", "/login"]) {
     const response = await render(pathname);
     assert.equal(response.status, 200, pathname);
     const html = await response.text();
@@ -74,5 +74,7 @@ test("source keeps navigation, approval, and accessibility behaviors wired", asy
   assert.match(app, /Install GitHub App/);
   assert.match(app, /Connect GitLab/);
   assert.match(app, /providers\.gitlab \?/);
+  assert.match(app, /\/api\/v1\/internal\/executions/);
+  assert.match(app, /Agent Compose execution diagnostic/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 });
