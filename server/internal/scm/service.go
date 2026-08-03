@@ -192,17 +192,26 @@ func (s *Service) HandleWebhook(ctx context.Context, provider Provider, headers 
 }
 
 func (s *Service) HandleWebhookEvent(ctx context.Context, provider Provider, headers http.Header, body []byte) (WebhookEvent, bool, error) {
-	adapter, ok := s.adapters[provider]
-	if !ok || !adapter.Available() {
-		return WebhookEvent{}, false, ErrProviderUnavailable
-	}
-	event, err := adapter.VerifyWebhook(headers, body)
+	event, err := s.VerifyWebhook(provider, headers, body)
 	if err != nil {
 		return WebhookEvent{}, false, err
 	}
+	created, err := s.RecordWebhook(ctx, provider, event, body)
+	return event, created, err
+}
+
+func (s *Service) VerifyWebhook(provider Provider, headers http.Header, body []byte) (WebhookEvent, error) {
+	adapter, ok := s.adapters[provider]
+	if !ok || !adapter.Available() {
+		return WebhookEvent{}, ErrProviderUnavailable
+	}
+	return adapter.VerifyWebhook(headers, body)
+}
+
+func (s *Service) RecordWebhook(ctx context.Context, provider Provider, event WebhookEvent, body []byte) (bool, error) {
 	payloadHash := sha256.Sum256(body)
 	created, err := s.store.RecordWebhook(ctx, provider, event, payloadHash[:], s.now().UTC())
-	return event, created, err
+	return created, err
 }
 
 // PublishGitHubReview writes the review result to GitHub using a fresh
@@ -228,7 +237,7 @@ func (s *Service) PublishGitHubReview(ctx context.Context, repository, installat
 	if err := json.Unmarshal(result, &output); err != nil || strings.TrimSpace(output.Summary) == "" {
 		return ErrInvalidWebhook
 	}
-	if strings.TrimSpace(repository) == "" || len(output.Findings) > 200 {
+	if !validGitHubRepository(repository) || len(output.Findings) > 200 {
 		return ErrInvalidWebhook
 	}
 	token, err := github.InstallationToken(ctx, installationID)
@@ -254,6 +263,19 @@ func (s *Service) PublishGitHubReview(ctx context.Context, repository, installat
 		}
 	}
 	return github.CreateIssueComment(ctx, token, repository, number, comment.String())
+}
+
+func validGitHubRepository(value string) bool {
+	parts := strings.Split(strings.TrimSpace(value), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, part := range parts {
+		if strings.ContainsAny(part, "\\?#%\"' ") || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) sealCredential(credential Credential) ([]byte, error) {

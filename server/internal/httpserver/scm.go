@@ -156,7 +156,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, provider 
 		return
 	}
 	if s.review != nil && provider == scm.ProviderGitHub {
-		event, created, err := s.scm.HandleWebhookEvent(r.Context(), provider, r.Header, body)
+		event, err := s.scm.VerifyWebhook(provider, r.Header, body)
 		if errors.Is(err, scm.ErrInvalidWebhook) {
 			writeError(w, http.StatusUnauthorized, "webhook_invalid")
 			return
@@ -169,10 +169,6 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, provider 
 			writeError(w, http.StatusInternalServerError, "webhook_failed")
 			return
 		}
-		if !created {
-			writeJSON(w, http.StatusAccepted, map[string]string{"status": "duplicate", "provider": "github"})
-			return
-		}
 		task, actionable, err := s.review.HandleWebhook(r.Context(), event)
 		if errors.Is(err, review.ErrUnsupportedEvent) {
 			actionable = false
@@ -183,7 +179,25 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, provider 
 			return
 		}
 		if !actionable {
+			created, recordErr := s.scm.RecordWebhook(r.Context(), provider, event, body)
+			if recordErr != nil {
+				writeError(w, http.StatusInternalServerError, "webhook_failed")
+				return
+			}
+			if !created {
+				writeJSON(w, http.StatusAccepted, map[string]string{"status": "duplicate", "provider": "github"})
+				return
+			}
 			writeJSON(w, http.StatusAccepted, map[string]string{"status": "ignored", "provider": "github"})
+			return
+		}
+		created, err := s.scm.RecordWebhook(r.Context(), provider, event, body)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "webhook_failed")
+			return
+		}
+		if !created {
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "duplicate", "provider": "github"})
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"status": "task_created", "provider": "github", "task": task})

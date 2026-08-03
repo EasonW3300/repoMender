@@ -12,6 +12,7 @@ func TestEventFromWebhookUsesImmutableHead(t *testing.T) {
 		DeliveryID: "delivery-1", EventType: "pull_request",
 		Normalized: map[string]any{
 			"action": "synchronize", "repositoryId": int64(7), "repository": "acme/payments",
+			"cloneURL":          "https://github.com/acme/payments.git",
 			"pullRequestNumber": 12, "headSHA": "0123456789abcdef0123456789abcdef01234567",
 			"headBranch": "feature/fix", "baseBranch": "main", "installationId": int64(42),
 		},

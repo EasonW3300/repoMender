@@ -84,7 +84,7 @@ func EventFromWebhook(event scm.WebhookEvent) (PullRequestEvent, error) {
 	}
 	repositoryID := value("repositoryId")
 	repositoryName := value("repository")
-	if repositoryID == "" || repositoryName == "" {
+	if repositoryID == "" || repositoryName == "" || value("cloneURL") == "" {
 		return PullRequestEvent{}, fmt.Errorf("%w: repository", ErrInvalidResult)
 	}
 	return PullRequestEvent{
@@ -102,7 +102,7 @@ func ValidateResult(raw json.RawMessage) (Result, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
 	var result Result
-	if err := decoder.Decode(&result); err != nil || result.SchemaVersion != "v1" || strings.TrimSpace(result.Summary) == "" {
+	if err := decoder.Decode(&result); err != nil || result.SchemaVersion != "v1" || strings.TrimSpace(result.Summary) == "" || len(result.Summary) > 20000 {
 		return Result{}, ErrInvalidResult
 	}
 	if len(result.Findings) > 200 {
@@ -115,7 +115,7 @@ func ValidateResult(raw json.RawMessage) (Result, error) {
 		default:
 			return Result{}, fmt.Errorf("%w: finding %d severity", ErrInvalidResult, index)
 		}
-		if finding.Category == "" || finding.Path == "" || path.IsAbs(finding.Path) || hasParentSegment(finding.Path) {
+		if finding.Category == "" || finding.Path == "" || strings.TrimSpace(finding.Explanation) == "" || path.IsAbs(finding.Path) || hasParentSegment(finding.Path) {
 			return Result{}, fmt.Errorf("%w: finding %d location", ErrInvalidResult, index)
 		}
 		if finding.LineStart != nil && *finding.LineStart < 1 || finding.LineEnd != nil && *finding.LineEnd < 1 {
