@@ -126,12 +126,16 @@ func (c *Client) Start(ctx context.Context, request execution.Request) (executio
 	if request.Policy.Cleanup == "remove" {
 		cleanupPolicy = "RUN_SANDBOX_CLEANUP_POLICY_REMOVE_ON_COMPLETION"
 	}
+	outputSchema := strings.TrimSpace(request.OutputSchemaJSON)
+	if outputSchema == "" {
+		outputSchema = diagnosticOutputSchema
+	}
 	wireRequest := struct {
 		Run runAgentRequest `json:"run"`
 	}{Run: runAgentRequest{
 		ProjectID: request.ProjectID, AgentName: request.AgentName,
 		Prompt: immutablePrompt(request), Source: "RUN_SOURCE_API",
-		CleanupPolicy: cleanupPolicy, OutputSchemaJSON: diagnosticOutputSchema,
+		CleanupPolicy: cleanupPolicy, OutputSchemaJSON: outputSchema,
 		ClientRequestID: request.CorrelationID, Driver: request.Policy.Driver,
 		PayloadJSON: string(payload),
 	}}

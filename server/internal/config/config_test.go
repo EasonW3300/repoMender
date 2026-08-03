@@ -166,6 +166,20 @@ func TestLoadM4TasksFeatureFlag(t *testing.T) {
 	}
 }
 
+func TestLoadM5RequiresPriorModules(t *testing.T) {
+	lookup := map[string]string{
+		"REPOMENDER_DATABASE_URL":           "postgres://localhost/repomender",
+		"REPOMENDER_FEATURE_M5_CODE_REVIEW": "true",
+	}
+	_, err := load(func(key string) (string, bool) {
+		value, ok := lookup[key]
+		return value, ok
+	})
+	if err == nil {
+		t.Fatal("expected M5 to require M2, M3, and M4")
+	}
+}
+
 func TestLoadAcceptsAgentComposeConfiguration(t *testing.T) {
 	values := map[string]string{
 		"REPOMENDER_DATABASE_URL":            "postgres://example",

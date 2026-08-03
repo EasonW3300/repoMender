@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -169,17 +170,90 @@ func (s *Service) GetRepository(ctx context.Context, _ auth.User, id string) (Re
 	return repository, nil
 }
 
+// FindRepository resolves a provider repository ID from the last synchronized
+// snapshot. Webhook handlers use this to attach tasks to our internal UUID
+// without trusting a vendor-owned identifier as a database foreign key.
+func (s *Service) FindRepository(ctx context.Context, provider Provider, providerRepositoryID string) (Repository, error) {
+	repositories, err := s.store.ListRepositories(ctx)
+	if err != nil {
+		return Repository{}, err
+	}
+	for _, repository := range repositories {
+		if repository.Provider == provider && repository.ProviderRepositoryID == providerRepositoryID {
+			return repository, nil
+		}
+	}
+	return Repository{}, ErrRepositoryNotFound
+}
+
 func (s *Service) HandleWebhook(ctx context.Context, provider Provider, headers http.Header, body []byte) (bool, error) {
+	_, created, err := s.HandleWebhookEvent(ctx, provider, headers, body)
+	return created, err
+}
+
+func (s *Service) HandleWebhookEvent(ctx context.Context, provider Provider, headers http.Header, body []byte) (WebhookEvent, bool, error) {
 	adapter, ok := s.adapters[provider]
 	if !ok || !adapter.Available() {
-		return false, ErrProviderUnavailable
+		return WebhookEvent{}, false, ErrProviderUnavailable
 	}
 	event, err := adapter.VerifyWebhook(headers, body)
 	if err != nil {
-		return false, err
+		return WebhookEvent{}, false, err
 	}
 	payloadHash := sha256.Sum256(body)
-	return s.store.RecordWebhook(ctx, provider, event, payloadHash[:], s.now().UTC())
+	created, err := s.store.RecordWebhook(ctx, provider, event, payloadHash[:], s.now().UTC())
+	return event, created, err
+}
+
+// PublishGitHubReview writes the review result to GitHub using a fresh
+// installation token. The raw result is intentionally bounded and parsed here
+// so provider output cannot smuggle arbitrary API fields into the publication.
+func (s *Service) PublishGitHubReview(ctx context.Context, repository, installationID string, number int, sha string, result json.RawMessage) error {
+	adapter, ok := s.adapters[ProviderGitHub]
+	if !ok || !adapter.Available() {
+		return ErrProviderUnavailable
+	}
+	github, ok := adapter.(*GitHubAdapter)
+	if !ok {
+		return errors.New("GitHub adapter does not support review publication")
+	}
+	var output struct {
+		Summary  string `json:"summary"`
+		Findings []struct {
+			Severity string `json:"severity"`
+			Path     string `json:"path"`
+			Line     *int   `json:"lineStart"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal(result, &output); err != nil || strings.TrimSpace(output.Summary) == "" {
+		return ErrInvalidWebhook
+	}
+	if strings.TrimSpace(repository) == "" || len(output.Findings) > 200 {
+		return ErrInvalidWebhook
+	}
+	token, err := github.InstallationToken(ctx, installationID)
+	if err != nil {
+		return err
+	}
+	if err := github.CreateCheckRun(ctx, token, repository, sha, output.Summary, len(output.Findings)); err != nil {
+		return err
+	}
+	var comment strings.Builder
+	comment.WriteString("## RepoMender code review\n\n")
+	comment.WriteString(output.Summary)
+	comment.WriteString("\n\n")
+	if len(output.Findings) == 0 {
+		comment.WriteString("No actionable findings.")
+	} else {
+		for _, finding := range output.Findings {
+			comment.WriteString("- **" + finding.Severity + "** `" + finding.Path + "`")
+			if finding.Line != nil {
+				comment.WriteString(fmt.Sprintf(":%d", *finding.Line))
+			}
+			comment.WriteString("\n")
+		}
+	}
+	return github.CreateIssueComment(ctx, token, repository, number, comment.String())
 }
 
 func (s *Service) sealCredential(credential Credential) ([]byte, error) {

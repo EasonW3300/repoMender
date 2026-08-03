@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/EasonW3300/repoMender/server/internal/auth"
+	"github.com/EasonW3300/repoMender/server/internal/review"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
 )
 
@@ -152,6 +153,40 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, provider 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2<<20))
 	if err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "webhook_too_large")
+		return
+	}
+	if s.review != nil && provider == scm.ProviderGitHub {
+		event, created, err := s.scm.HandleWebhookEvent(r.Context(), provider, r.Header, body)
+		if errors.Is(err, scm.ErrInvalidWebhook) {
+			writeError(w, http.StatusUnauthorized, "webhook_invalid")
+			return
+		}
+		if errors.Is(err, scm.ErrProviderUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "scm_provider_unavailable")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "webhook_failed")
+			return
+		}
+		if !created {
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "duplicate", "provider": "github"})
+			return
+		}
+		task, actionable, err := s.review.HandleWebhook(r.Context(), event)
+		if errors.Is(err, review.ErrUnsupportedEvent) {
+			actionable = false
+			err = nil
+		}
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "review_event_invalid")
+			return
+		}
+		if !actionable {
+			writeJSON(w, http.StatusAccepted, map[string]string{"status": "ignored", "provider": "github"})
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"status": "task_created", "provider": "github", "task": task})
 		return
 	}
 	created, err := s.scm.HandleWebhook(r.Context(), provider, r.Header, body)

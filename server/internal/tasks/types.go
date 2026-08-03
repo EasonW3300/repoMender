@@ -157,6 +157,34 @@ type Store interface {
 	AppendRunEvent(context.Context, string, RunEventInput) (RunEvent, error)
 	ListAuditEvents(context.Context, AuditFilter) ([]AuditEvent, error)
 	RecordAudit(context.Context, AuditInput) (AuditEvent, error)
+	CreateFinding(context.Context, FindingInput) (Finding, error)
+	ListFindings(context.Context, string) ([]Finding, error)
+	CreateEvidence(context.Context, EvidenceInput) (Evidence, error)
+	ListEvidence(context.Context, string) ([]Evidence, error)
+	SupersedeCodeReviews(context.Context, string, int, string) error
+}
+
+type FindingInput struct {
+	TaskID      string
+	RunID       string
+	Severity    string
+	Category    string
+	Path        string
+	LineStart   *int
+	LineEnd     *int
+	Explanation string
+	Evidence    json.RawMessage
+	Confidence  *float64
+	Remediation string
+}
+
+type EvidenceInput struct {
+	TaskID  string
+	RunID   string
+	Kind    string
+	Title   string
+	Content json.RawMessage
+	Digest  string
 }
 
 type ListFilter struct {
@@ -210,7 +238,7 @@ func CanTransition(from, to Status) bool {
 		return from == StatusRunning || from == StatusAwaitingApproval
 	}
 	allowed := map[Status][]Status{
-		StatusQueued:           {StatusRunning, StatusCancelled},
+		StatusQueued:           {StatusRunning, StatusCancelled, StatusSuperseded},
 		StatusRunning:          {StatusAwaitingApproval, StatusSucceeded, StatusFailed, StatusCancelled, StatusSuperseded},
 		StatusAwaitingApproval: {StatusSucceeded, StatusFailed, StatusCancelled, StatusSuperseded},
 		StatusFailed:           {StatusQueued, StatusCancelled, StatusSuperseded},

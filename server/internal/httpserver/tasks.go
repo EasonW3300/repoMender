@@ -112,7 +112,17 @@ func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
 		writeTaskError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"task": task, "runs": runs, "findings": []tasks.Finding{}, "evidence": []tasks.Evidence{}, "audit": audit, "viewer": session.User.ID})
+	findings, err := s.tasks.Findings(r.Context(), task.ID)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	evidence, err := s.tasks.Evidence(r.Context(), task.ID)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"task": task, "runs": runs, "findings": findings, "evidence": evidence, "audit": audit, "viewer": session.User.ID})
 }
 
 func (s *Server) cancelTask(w http.ResponseWriter, r *http.Request) {

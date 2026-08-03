@@ -12,7 +12,10 @@ import (
 
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
+	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
 	"github.com/EasonW3300/repoMender/server/internal/httpserver"
+	"github.com/EasonW3300/repoMender/server/internal/review"
+	"github.com/EasonW3300/repoMender/server/internal/scm"
 	"github.com/EasonW3300/repoMender/server/internal/tasks"
 	"github.com/EasonW3300/repoMender/server/internal/worker"
 )
@@ -62,8 +65,42 @@ func run(args []string) error {
 			if lease < 5*time.Second {
 				lease = 5 * time.Second
 			}
-			return worker.RunQueue(ctx, cfg.WorkerPoll, lease, workerOwner(), service,
-				worker.NewCoreProcessor(service))
+			var processor worker.TaskProcessor = worker.NewCoreProcessor(service)
+			if cfg.FeatureM5CodeReview {
+				if !cfg.FeatureM3ACExecution {
+					return errors.New("M5 code review requires M3 AC execution")
+				}
+				acClient, err := agentcompose.New(agentcompose.Config{
+					BaseURL: cfg.ACBaseURL, AuthToken: cfg.ACAuthToken,
+					RequiredVersion: cfg.ACRequiredVersion, RequiredDriver: cfg.ACRequiredDriver,
+					RequestTimeout: cfg.ACRequestTimeout, SensitivePatterns: cfg.ACSensitivePatterns,
+				})
+				if err != nil {
+					return err
+				}
+				var publisher review.Publisher
+				if cfg.FeatureM2SCM {
+					box, err := scm.NewSecretBox(cfg.SCMMasterKey)
+					if err != nil {
+						return err
+					}
+					github, err := scm.NewGitHubAdapter(scm.GitHubConfig{
+						AppID: cfg.GitHubAppID, Slug: cfg.GitHubAppSlug,
+						PrivateKeyPEM: cfg.GitHubPrivateKey, WebhookSecret: cfg.GitHubWebhookSecret,
+						APIBaseURL: cfg.GitHubAPIBaseURL, WebBaseURL: cfg.GitHubWebBaseURL,
+					}, nil)
+					if err != nil {
+						return err
+					}
+					publisher = scm.NewService(scm.NewPostgreSQLStore(db), box, github)
+				}
+				if publisher != nil {
+					processor = review.NewProcessor(service, acClient, 15*time.Minute, publisher)
+				} else {
+					processor = review.NewProcessor(service, acClient, 15*time.Minute)
+				}
+			}
+			return worker.RunQueue(ctx, cfg.WorkerPoll, lease, workerOwner(), service, processor)
 		}
 		return worker.Run(ctx, cfg, db)
 	case "migrate":

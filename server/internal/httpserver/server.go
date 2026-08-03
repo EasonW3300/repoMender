@@ -14,6 +14,7 @@ import (
 	"github.com/EasonW3300/repoMender/server/internal/database"
 	"github.com/EasonW3300/repoMender/server/internal/execution"
 	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
+	"github.com/EasonW3300/repoMender/server/internal/review"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
 	"github.com/EasonW3300/repoMender/server/internal/tasks"
 )
@@ -38,6 +39,7 @@ type Server struct {
 	scm          *scm.Service
 	execution    execution.Adapter
 	tasks        *tasks.Service
+	review       *review.Service
 	cookieSecure bool
 }
 
@@ -87,6 +89,23 @@ func NewWithTaskServices(
 ) *Server {
 	server := NewWithServices(checker, service, provider, scmService, cookieSecure, readiness...)
 	server.tasks = taskService
+	return server
+}
+
+// NewWithReviewServices extends the M4 constructor without changing existing
+// test and embedding call sites that intentionally keep M5 disabled.
+func NewWithReviewServices(
+	checker HealthChecker,
+	service *auth.Service,
+	provider auth.OIDCProvider,
+	scmService *scm.Service,
+	taskService *tasks.Service,
+	reviewService *review.Service,
+	cookieSecure bool,
+	readiness ...ReadinessDependency,
+) *Server {
+	server := NewWithTaskServices(checker, service, provider, scmService, taskService, cookieSecure, readiness...)
+	server.review = reviewService
 	return server
 }
 
@@ -193,9 +212,13 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 	if cfg.FeatureM4Tasks {
 		taskService = tasks.NewService(tasks.NewPostgreSQLStore(db))
 	}
+	var reviewService *review.Service
+	if cfg.FeatureM5CodeReview && cfg.FeatureM2SCM && cfg.FeatureM4Tasks && scmService != nil && taskService != nil {
+		reviewService = review.NewService(taskService, scmService)
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           NewWithTaskServices(db, service, provider, scmService, taskService, cfg.CookieSecure, readiness...).Handler(),
+		Handler:           NewWithReviewServices(db, service, provider, scmService, taskService, reviewService, cfg.CookieSecure, readiness...).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

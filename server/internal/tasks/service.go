@@ -77,6 +77,26 @@ func (s *Service) RecordAudit(ctx context.Context, input AuditInput) (AuditEvent
 	return s.store.RecordAudit(ctx, input)
 }
 
+func (s *Service) CreateFinding(ctx context.Context, input FindingInput) (Finding, error) {
+	return s.store.CreateFinding(ctx, input)
+}
+
+func (s *Service) Findings(ctx context.Context, taskID string) ([]Finding, error) {
+	return s.store.ListFindings(ctx, taskID)
+}
+
+func (s *Service) CreateEvidence(ctx context.Context, input EvidenceInput) (Evidence, error) {
+	return s.store.CreateEvidence(ctx, input)
+}
+
+func (s *Service) Evidence(ctx context.Context, taskID string) ([]Evidence, error) {
+	return s.store.ListEvidence(ctx, taskID)
+}
+
+func (s *Service) SupersedeCodeReviews(ctx context.Context, repositoryID string, pullRequest int, newTaskID string) error {
+	return s.store.SupersedeCodeReviews(ctx, repositoryID, pullRequest, newTaskID)
+}
+
 func normalizePayload(payload json.RawMessage) json.RawMessage {
 	if len(payload) == 0 {
 		return json.RawMessage(`{}`)

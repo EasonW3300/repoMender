@@ -136,6 +136,26 @@ func (m *taskMemoryStore) RecordAudit(_ context.Context, input tasks.AuditInput)
 	return event, nil
 }
 
+func (m *taskMemoryStore) CreateFinding(_ context.Context, input tasks.FindingInput) (tasks.Finding, error) {
+	return tasks.Finding{ID: "finding-1", TaskID: input.TaskID, Severity: input.Severity, Category: input.Category, Path: input.Path, Explanation: input.Explanation, Evidence: input.Evidence}, nil
+}
+
+func (m *taskMemoryStore) ListFindings(context.Context, string) ([]tasks.Finding, error) {
+	return []tasks.Finding{}, nil
+}
+
+func (m *taskMemoryStore) CreateEvidence(_ context.Context, input tasks.EvidenceInput) (tasks.Evidence, error) {
+	return tasks.Evidence{ID: "evidence-1", TaskID: input.TaskID, Kind: input.Kind, Title: input.Title, Content: input.Content, Digest: input.Digest}, nil
+}
+
+func (m *taskMemoryStore) ListEvidence(context.Context, string) ([]tasks.Evidence, error) {
+	return []tasks.Evidence{}, nil
+}
+
+func (m *taskMemoryStore) SupersedeCodeReviews(context.Context, string, int, string) error {
+	return nil
+}
+
 func TestTaskAPIEnforcesCSRFAndPersistsAudit(t *testing.T) {
 	authService := auth.NewService(newAuthMemoryStore(), time.Hour)
 	if _, err := authService.Bootstrap(context.Background(), "admin@example.com", "correct-horse-battery"); err != nil {

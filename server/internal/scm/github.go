@@ -174,6 +174,51 @@ func (a *GitHubAdapter) Repositories(ctx context.Context, connection RemoteConne
 	return repositories, Credential{}, nil
 }
 
+// InstallationToken creates a short-lived token only for the current
+// publication request; it is never returned to or stored by RepoMender.
+func (a *GitHubAdapter) InstallationToken(ctx context.Context, installationID string) (string, error) {
+	id, err := strconv.ParseInt(strings.TrimSpace(installationID), 10, 64)
+	if err != nil || id <= 0 {
+		return "", errors.New("invalid GitHub installation")
+	}
+	var response struct {
+		Token string `json:"token"`
+	}
+	if err := a.appJSON(ctx, http.MethodPost, fmt.Sprintf("/app/installations/%d/access_tokens", id), []byte("{}"), &response); err != nil {
+		return "", err
+	}
+	if response.Token == "" {
+		return "", errors.New("GitHub installation token missing")
+	}
+	return response.Token, nil
+}
+
+func (a *GitHubAdapter) CreateCheckRun(ctx context.Context, token, repository, sha, summary string, findingCount int) error {
+	conclusion := "success"
+	if findingCount > 0 {
+		conclusion = "action_required"
+	}
+	body, err := json.Marshal(map[string]any{
+		"name": "RepoMender Code Review", "head_sha": sha, "status": "completed",
+		"conclusion": conclusion,
+		"output":     map[string]any{"title": "RepoMender review", "summary": summary},
+	})
+	if err != nil {
+		return err
+	}
+	var response map[string]any
+	return a.tokenJSON(ctx, http.MethodPost, "/repos/"+repository+"/check-runs", token, body, &response)
+}
+
+func (a *GitHubAdapter) CreateIssueComment(ctx context.Context, token, repository string, number int, bodyText string) error {
+	body, err := json.Marshal(map[string]string{"body": bodyText})
+	if err != nil {
+		return err
+	}
+	var response map[string]any
+	return a.tokenJSON(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", repository, number), token, body, &response)
+}
+
 func (a *GitHubAdapter) VerifyWebhook(headers http.Header, body []byte) (WebhookEvent, error) {
 	signature := headers.Get("X-Hub-Signature-256")
 	deliveryID := headers.Get("X-GitHub-Delivery")
@@ -190,26 +235,55 @@ func (a *GitHubAdapter) VerifyWebhook(headers http.Header, body []byte) (Webhook
 	var payload struct {
 		Action       string `json:"action"`
 		Ref          string `json:"ref"`
+		Number       int    `json:"number"`
 		Installation struct {
 			ID int64 `json:"id"`
 		} `json:"installation"`
 		Repository struct {
 			ID       int64  `json:"id"`
 			FullName string `json:"full_name"`
+			CloneURL string `json:"clone_url"`
+			HTMLURL  string `json:"html_url"`
 		} `json:"repository"`
+		PullRequest struct {
+			Number  int    `json:"number"`
+			HTMLURL string `json:"html_url"`
+			Head    struct {
+				Ref string `json:"ref"`
+				SHA string `json:"sha"`
+			} `json:"head"`
+			Base struct {
+				Ref string `json:"ref"`
+			} `json:"base"`
+			User struct {
+				Login string `json:"login"`
+			} `json:"user"`
+		} `json:"pull_request"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return WebhookEvent{}, ErrInvalidWebhook
 	}
+	prNumber := payload.Number
+	if prNumber == 0 {
+		prNumber = payload.PullRequest.Number
+	}
+	normalized := map[string]any{
+		"action": payload.Action, "ref": payload.Ref,
+		"installationId":    payload.Installation.ID,
+		"repositoryId":      payload.Repository.ID,
+		"repository":        payload.Repository.FullName,
+		"cloneURL":          payload.Repository.CloneURL,
+		"webURL":            payload.Repository.HTMLURL,
+		"pullRequestNumber": prNumber,
+		"baseBranch":        payload.PullRequest.Base.Ref,
+		"headBranch":        payload.PullRequest.Head.Ref,
+		"headSHA":           payload.PullRequest.Head.SHA,
+		"author":            payload.PullRequest.User.Login,
+	}
 	return WebhookEvent{
 		DeliveryID: deliveryID,
 		EventType:  eventType,
-		Normalized: map[string]any{
-			"action": payload.Action, "ref": payload.Ref,
-			"installationId": payload.Installation.ID,
-			"repositoryId":   payload.Repository.ID,
-			"repository":     payload.Repository.FullName,
-		},
+		Normalized: normalized,
 	}, nil
 }
 

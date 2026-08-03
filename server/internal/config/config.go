@@ -26,6 +26,7 @@ type Config struct {
 	FeatureM2SCM         bool
 	FeatureM3ACExecution bool
 	FeatureM4Tasks       bool
+	FeatureM5CodeReview  bool
 	FeatureGitLab        bool
 	SCMMasterKey         []byte
 	GitHubAppID          int64
@@ -84,6 +85,10 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	featureM5CodeReview, err := boolOrDefault(lookup, "REPOMENDER_FEATURE_M5_CODE_REVIEW", false)
+	if err != nil {
+		return Config{}, err
+	}
 	masterKey, err := decodeBase64Value(lookup, "REPOMENDER_MASTER_KEY")
 	if err != nil {
 		return Config{}, err
@@ -110,6 +115,7 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		FeatureM2SCM:         featureM2SCM,
 		FeatureM3ACExecution: featureM3ACExecution,
 		FeatureM4Tasks:       featureM4Tasks,
+		FeatureM5CodeReview:  featureM5CodeReview,
 		FeatureGitLab:        featureGitLab,
 		SCMMasterKey:         masterKey,
 		GitHubAppID:          githubAppID,
@@ -178,6 +184,12 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 			return Config{}, errors.New("REPOMENDER_AC_BASE_URL must be an absolute HTTP(S) URL")
 		}
 	}
+	if cfg.FeatureM5CodeReview && (!cfg.FeatureM2SCM || !cfg.FeatureM3ACExecution || !cfg.FeatureM4Tasks) {
+		return Config{}, errors.New("REPOMENDER_FEATURE_M5_CODE_REVIEW requires M2 SCM, M3 AC execution, and M4 tasks")
+	}
+	if cfg.FeatureM5CodeReview && !allConfigured(githubValues) {
+		return Config{}, errors.New("GitHub App configuration is required when M5 code review is enabled")
+	}
 
 	return cfg, nil
 }
@@ -190,6 +202,15 @@ func partiallyConfigured(values []bool) bool {
 		}
 	}
 	return configured != 0 && configured != len(values)
+}
+
+func allConfigured(values []bool) bool {
+	for _, value := range values {
+		if !value {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeBase64Value(lookup func(string) (string, bool), key string) ([]byte, error) {
