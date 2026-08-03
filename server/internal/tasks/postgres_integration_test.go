@@ -128,8 +128,8 @@ func TestPostgreSQLTaskStateAndAuditLifecycle(t *testing.T) {
 func ensureTestUser(t *testing.T, ctx context.Context, db *database.DB, id string) {
 	t.Helper()
 	if _, err := db.Exec(ctx, `
-		INSERT INTO users(id, email, display_name, role, auth_source, active)
-		VALUES ($1, $2, 'M4 test', 'admin', 'local', true)
+		INSERT INTO users(id, email, display_name, role, auth_source, subject, active)
+		VALUES ($1, $2, 'M4 test', 'admin', 'oidc', 'm4-task-test-subject', true)
 		ON CONFLICT (id) DO NOTHING`, id, "m4-task-test@example.com"); err != nil {
 		t.Fatalf("insert test user: %v", err)
 	}
