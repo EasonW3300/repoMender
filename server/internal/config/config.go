@@ -25,6 +25,7 @@ type Config struct {
 	OIDCClientSecret     string
 	FeatureM2SCM         bool
 	FeatureM3ACExecution bool
+	FeatureM4Tasks       bool
 	FeatureGitLab        bool
 	SCMMasterKey         []byte
 	GitHubAppID          int64
@@ -79,6 +80,10 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	featureM4Tasks, err := boolOrDefault(lookup, "REPOMENDER_FEATURE_M4_TASKS", false)
+	if err != nil {
+		return Config{}, err
+	}
 	masterKey, err := decodeBase64Value(lookup, "REPOMENDER_MASTER_KEY")
 	if err != nil {
 		return Config{}, err
@@ -104,6 +109,7 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		OIDCClientSecret:     valueOrDefault(lookup, "REPOMENDER_OIDC_CLIENT_SECRET", ""),
 		FeatureM2SCM:         featureM2SCM,
 		FeatureM3ACExecution: featureM3ACExecution,
+		FeatureM4Tasks:       featureM4Tasks,
 		FeatureGitLab:        featureGitLab,
 		SCMMasterKey:         masterKey,
 		GitHubAppID:          githubAppID,

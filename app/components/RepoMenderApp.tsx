@@ -112,6 +112,170 @@ function TaskTable({ rows, onOpen }: { rows: TaskRecord[]; onOpen: (route: strin
   );
 }
 
+type APITask = {
+  id: string;
+  kind: "code_review" | "ci_diagnosis" | "issue_repair";
+  status: string;
+  title: string;
+  repositoryName: string;
+  attempts: number;
+  maxAttempts: number;
+  createdAt: string;
+  updatedAt: string;
+  lastError?: string;
+};
+
+function taskKindLabel(kind: APITask["kind"]): TaskRecord["type"] {
+  if (kind === "code_review") return "Code Review";
+  if (kind === "ci_diagnosis") return "CI Diagnosis";
+  return "Issue Repair";
+}
+
+function taskTone(status: string): Tone {
+  if (status === "succeeded") return "success";
+  if (status === "failed") return "critical";
+  if (status === "cancelled" || status === "superseded") return "neutral";
+  if (status === "awaiting_approval") return "warning";
+  if (status === "running") return "info";
+  return "neutral";
+}
+
+function taskStatusLabel(status: string): string {
+  return status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function TasksPage({ navigate }: { navigate: (route: string) => void }) {
+  const [items, setItems] = useState<APITask[]>([]);
+  const [filter, setFilter] = useState("All");
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/v1/tasks?limit=100");
+      if (response.status === 401) {
+        navigate("/login");
+        return;
+      }
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setMessage(response.status === 404 ? "M4 task management is disabled on this deployment." : `Task API unavailable: ${body.error || "request_failed"}`);
+        return;
+      }
+      setItems((body.tasks ?? []) as APITask[]);
+    } catch {
+      setMessage("RepoMender API is unavailable. Task data was not replaced with browser mocks.");
+    } finally {
+      setLoading(false);
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  const visible = filter === "Needs attention"
+    ? items.filter((item) => !["succeeded", "cancelled", "superseded"].includes(item.status))
+    : filter === "Running"
+      ? items.filter((item) => item.status === "running")
+      : items;
+  const rows: TaskRecord[] = visible.map((item) => ({
+    id: item.id.slice(0, 12),
+    type: taskKindLabel(item.kind),
+    title: item.title,
+    repository: item.repositoryName || "—",
+    status: taskStatusLabel(item.status),
+    tone: taskTone(item.status),
+    agent: `Attempt ${item.attempts}/${item.maxAttempts}`,
+    duration: "—",
+    updated: new Date(item.updatedAt).toLocaleString(),
+    route: `/tasks/${encodeURIComponent(item.id)}`,
+  }));
+
+  return (
+    <>
+      <PageHeader eyebrow="Engineering · M4 task core" title="All tasks" description="Durable reviews, diagnostics, repairs, retries, and audit-linked runs." actions={<button className="secondary-button" onClick={() => void load()}>Refresh</button>} />
+      {message ? <div className="identity-message" role="status">{message}</div> : null}
+      <div className="filter-bar" aria-label="Task filters">
+        {["All", "Needs attention", "Running"].map((item) => <button key={item} className={filter === item ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(item)}>{item}</button>)}
+      </div>
+      <section className="panel">
+        <div className="panel-heading"><div><span className="eyebrow">Persistent queue</span><h2>{loading ? "Loading tasks…" : `${rows.length} tasks`}</h2></div><span className="eyebrow">PostgreSQL-backed</span></div>
+        {!loading && rows.length ? <TaskTable rows={rows} onOpen={navigate} /> : <div className="empty-state"><strong>{loading ? "Reading durable task state…" : "No tasks found"}</strong><span>{message || "Tasks created by GitHub triggers and governed operators will appear here."}</span></div>}
+      </section>
+    </>
+  );
+}
+
+type TaskDetailResponse = {
+  task: APITask & { payload?: Record<string, unknown>; sourceKey?: string; lastError?: string };
+  runs: Array<{ id: string; attempt: number; status: string; correlationId: string; createdAt: string; finishedAt?: string }>;
+  audit: Array<{ action: string; outcome: string; createdAt: string }>;
+};
+
+function TaskDetailPage({ id, navigate }: { id: string; navigate: (route: string) => void }) {
+  const [detail, setDetail] = useState<TaskDetailResponse | null>(null);
+  const [message, setMessage] = useState("");
+  const [pending, setPending] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/v1/tasks/${encodeURIComponent(id)}`);
+      if (response.status === 401) {
+        navigate("/login");
+        return;
+      }
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "task_unavailable");
+      setDetail(body as TaskDetailResponse);
+    } catch (error) {
+      setMessage(`Task unavailable: ${error instanceof Error ? error.message : "request_failed"}`);
+    }
+  }, [id, navigate]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  const mutate = async (action: "cancel" | "retry") => {
+    setPending(true);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/v1/tasks/${encodeURIComponent(id)}/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfCookie() },
+        body: JSON.stringify({ reason: `operator requested ${action} from task detail` }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `${action}_failed`);
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : `${action}_failed`);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  if (message && !detail) return <><PageHeader eyebrow="M4 task" title="Task unavailable" description={message} actions={<button className="secondary-button" onClick={() => navigate("/tasks")}>Back to tasks</button>} /></>;
+  if (!detail) return <PageHeader eyebrow="M4 task" title="Loading task…" description="Reading the durable task, runs, and audit history." />;
+  const task = detail.task;
+  return (
+    <>
+      <PageHeader eyebrow={`${taskKindLabel(task.kind)} · ${task.repositoryName || "repository not set"}`} title={task.title} description={`Task ${task.id} · source ${task.sourceKey || "not provided"}`} actions={<><button className="secondary-button" onClick={() => navigate("/tasks")}>Back</button>{task.status === "failed" || task.status === "cancelled" ? <button className="secondary-button" disabled={pending} onClick={() => void mutate("retry")}>Retry</button> : null}{["queued", "running", "awaiting_approval"].includes(task.status) ? <button className="danger-button" disabled={pending} onClick={() => void mutate("cancel")}>Cancel</button> : null}</>} />
+      {message ? <div className="identity-message" role="status">{message}</div> : null}
+      <div className="detail-status"><Status tone={taskTone(task.status)}>{taskStatusLabel(task.status)}</Status><span>{task.attempts}/{task.maxAttempts} attempts</span><span>Updated {new Date(task.updatedAt).toLocaleString()}</span></div>
+      <div className="dashboard-grid">
+        <section className="panel"><div className="panel-heading"><div><span className="eyebrow">Runs</span><h2>{detail.runs.length} durable runs</h2></div></div>{detail.runs.length ? detail.runs.map((run) => <div className="test-row" key={run.id}><i /><span><strong>{run.id.slice(0, 12)}</strong><small>Attempt {run.attempt} · {new Date(run.createdAt).toLocaleString()}</small></span><Status tone={taskTone(run.status)}>{taskStatusLabel(run.status)}</Status></div>) : <div className="empty-state"><strong>No run claimed yet</strong><span>The task remains in the persistent queue.</span></div>}</section>
+        <aside className="panel"><div className="panel-heading"><div><span className="eyebrow">Audit history</span><h2>{detail.audit.length} events</h2></div></div>{detail.audit.length ? detail.audit.map((event, index) => <div className="test-row" key={`${event.action}-${index}`}><i /><span><strong>{event.action}</strong><small>{new Date(event.createdAt).toLocaleString()}</small></span><Status tone={event.outcome === "accepted" ? "success" : "neutral"}>{event.outcome}</Status></div>) : <div className="empty-state"><strong>No audit events</strong></div>}</aside>
+      </div>
+    </>
+  );
+}
+
 function Dashboard({ navigate }: { navigate: (route: string) => void }) {
   return (
     <>
@@ -518,20 +682,74 @@ function AutomationsPage({ showToast }: { showToast: (message: string) => void }
   );
 }
 
-function RunsPage() {
+function RunsPage({ navigate }: { navigate: (route: string) => void }) {
+  const [runs, setRuns] = useState<Array<{ id: string; taskId: string; attempt: number; status: string; correlationId: string; createdAt: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch("/api/v1/runs?limit=100");
+          if (response.status === 401) {
+            navigate("/login");
+            return;
+          }
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || "runs_unavailable");
+          setRuns(body.runs ?? []);
+        } catch (error) {
+          setMessage(error instanceof Error ? error.message : "runs_unavailable");
+        } finally {
+          setLoading(false);
+        }
+      })();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [navigate]);
+
   return (
     <>
       <PageHeader
         eyebrow="Agent Compose"
         title="Runs"
-        description="Execution history mapped to AC runs and isolated sandboxes."
+        description="Persistent execution history mapped to tasks, attempts, and run events."
       />
+      {message ? <div className="identity-message" role="status">M4 run API unavailable: {message}</div> : null}
       <section className="panel">
-        <div className="panel-heading"><div><span className="eyebrow">M4 boundary</span><h2>Persistent run history is not enabled yet</h2></div></div>
-        <div className="empty-state"><strong>M3 exposes only a controlled diagnostic.</strong><span>Task queues, retry history, and durable run records remain hidden until the M4 gate passes.</span></div>
+        <div className="panel-heading"><div><span className="eyebrow">Durable run history</span><h2>{loading ? "Loading runs…" : `${runs.length} runs`}</h2></div></div>
+        {!loading && runs.length ? <div className="table-scroll"><table><thead><tr><th>Run</th><th>Task</th><th>Status</th><th>Attempt</th><th>Created</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id} onClick={() => navigate(`/runs/${encodeURIComponent(run.id)}`)}><td><strong>{run.id.slice(0, 12)}</strong><small>{run.correlationId}</small></td><td>{run.taskId.slice(0, 12)}</td><td><Status tone={taskTone(run.status)}>{taskStatusLabel(run.status)}</Status></td><td>{run.attempt}</td><td>{new Date(run.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <div className="empty-state"><strong>{loading ? "Reading durable run state…" : "No runs found"}</strong><span>{message || "A run appears after a worker claims a task from the PostgreSQL queue."}</span></div>}
       </section>
     </>
   );
+}
+
+function RunDetailPage({ id, navigate }: { id: string; navigate: (route: string) => void }) {
+  const [detail, setDetail] = useState<{ run: { id: string; taskId: string; status: string; attempt: number; correlationId: string }; events: Array<{ sequence: number; kind: string; message: string; terminal: boolean }> } | null>(null);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch(`/api/v1/runs/${encodeURIComponent(id)}`);
+          if (response.status === 401) {
+            navigate("/login");
+            return;
+          }
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || "run_unavailable");
+          setDetail(body);
+        } catch (error) {
+          setMessage(error instanceof Error ? error.message : "run_unavailable");
+        }
+      })();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [id, navigate]);
+  if (message) return <><PageHeader eyebrow="Run" title="Run unavailable" description={message} actions={<button className="secondary-button" onClick={() => navigate("/runs")}>Back to runs</button>} /></>;
+  if (!detail) return <PageHeader eyebrow="Run" title="Loading run…" description="Reading persisted events and terminal state." />;
+  return <><PageHeader eyebrow={`Run · attempt ${detail.run.attempt}`} title={detail.run.id} description={`Task ${detail.run.taskId} · correlation ${detail.run.correlationId}`} actions={<button className="secondary-button" onClick={() => navigate("/runs")}>Back to runs</button>} /><div className="detail-status"><Status tone={taskTone(detail.run.status)}>{taskStatusLabel(detail.run.status)}</Status><span>{detail.events.length} persisted events</span></div><section className="panel"><div className="panel-heading"><div><span className="eyebrow">Run events</span><h2>Ordered stream</h2></div></div><pre className="log-viewer">{detail.events.length ? detail.events.map((event) => `${event.sequence.toString().padStart(6, "0")}  ${event.kind.padEnd(15)} ${event.message}`).join("\n") : "No events persisted for this run."}</pre></section></>;
 }
 
 type DiagnosticEvent = {
@@ -790,7 +1008,8 @@ export function RepoMenderApp() {
   const routeContent = () => {
     if (pathname === "/login") return <IdentityPage navigate={navigate} />;
     if (pathname === "/") return <Dashboard navigate={navigate} />;
-    if (pathname === "/tasks") return <ListPage title="All tasks" description="Unified reviews, diagnostics, repairs, and future maintenance automations." navigate={navigate} />;
+    if (pathname === "/tasks") return <TasksPage navigate={navigate} />;
+    if (pathname.startsWith("/tasks/")) return <TaskDetailPage id={decodeURIComponent(pathname.slice("/tasks/".length))} navigate={navigate} />;
     if (pathname === "/reviews") return <ListPage type="Code Review" title="Code reviews" description="Pull request risk, findings, evidence, and suggested repairs." navigate={navigate} />;
     if (pathname.startsWith("/reviews/")) return <ReviewDetail openDialog={setDialog} />;
     if (pathname === "/diagnostics") return <ListPage type="CI Diagnosis" title="CI diagnostics" description="Reproduced failures, root causes, patches, and verification evidence." navigate={navigate} />;
@@ -801,8 +1020,9 @@ export function RepoMenderApp() {
     if (pathname === "/repositories") return <RepositoriesPage navigate={navigate} />;
     if (pathname.startsWith("/repositories/")) return <RepositoryDetail id={decodeURIComponent(pathname.slice("/repositories/".length))} navigate={navigate} />;
     if (pathname === "/automations") return <AutomationsPage showToast={showToast} />;
-    if (pathname === "/runs") return <RunsPage />;
+    if (pathname === "/runs") return <RunsPage navigate={navigate} />;
     if (pathname === "/runs/diagnostic") return <ExecutionDiagnosticPage navigate={navigate} />;
+    if (pathname.startsWith("/runs/")) return <RunDetailPage id={decodeURIComponent(pathname.slice("/runs/".length))} navigate={navigate} />;
     if (pathname === "/settings") return <SettingsPage />;
     return <Dashboard navigate={navigate} />;
   };
