@@ -125,6 +125,49 @@ func TestPostgreSQLTaskStateAndAuditLifecycle(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLTaskLeaseRecoveryRejectsStaleCompletion(t *testing.T) {
+	databaseURL := os.Getenv("TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Fatal("TEST_DATABASE_URL is required")
+	}
+	ctx := context.Background()
+	db, err := database.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer db.Close()
+	if err := database.MigrateUp(ctx, db); err != nil {
+		t.Fatalf("MigrateUp() error = %v", err)
+	}
+	creatorID := "00000000-0000-4000-8000-000000000004"
+	ensureTestUser(t, ctx, db, creatorID)
+	store := NewPostgreSQLStore(db)
+	prefix := fmt.Sprintf("m4-lease-%d-", time.Now().UnixNano())
+	task, err := store.CreateTask(ctx, CreateInput{Kind: KindIssueRepair, Title: "Lease recovery", SourceKey: prefix + "one", CreatedBy: creatorID, MaxAttempts: 3})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	first, firstRun, err := store.ClaimTask(ctx, "worker-stale", 20*time.Millisecond)
+	if err != nil || first.ID != task.ID {
+		t.Fatalf("first ClaimTask() = %s, %v", first.ID, err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	second, secondRun, err := store.ClaimTask(ctx, "worker-replacement", time.Minute)
+	if err != nil || second.ID != task.ID || second.Attempts != 2 {
+		t.Fatalf("replacement ClaimTask() = %+v, %v", second, err)
+	}
+	if err := store.CompleteTask(ctx, task.ID, firstRun.ID, StatusSucceeded, "", "stale"); err != ErrLeaseLost {
+		t.Fatalf("stale CompleteTask() error = %v, want ErrLeaseLost", err)
+	}
+	if err := store.CompleteTask(ctx, task.ID, secondRun.ID, StatusFailed, "test_failure", "replacement failed"); err != nil {
+		t.Fatalf("replacement CompleteTask() error = %v", err)
+	}
+	queued, err := store.RetryTask(ctx, task.ID, "operator retry")
+	if err != nil || queued.Status != StatusQueued {
+		t.Fatalf("RetryTask() = %+v, %v", queued, err)
+	}
+}
+
 func ensureTestUser(t *testing.T, ctx context.Context, db *database.DB, id string) {
 	t.Helper()
 	if _, err := db.Exec(ctx, `
