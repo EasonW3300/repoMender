@@ -151,6 +151,25 @@ func TestClientCancelAndResult(t *testing.T) {
 	}
 }
 
+func TestClientResultPrefersAgentOutputAndStripsProviderPreamble(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != getRunProcedure {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"run":{"summary":{"runId":"run-1","status":"RUN_STATUS_SUCCEEDED"},"output":"Model metadata warning\n{\"schemaVersion\":\"v1\",\"summary\":\"ok\"}","resultJson":"{\"agent\":\"codex\",\"success\":true}"}}`))
+	}))
+	defer server.Close()
+
+	client := newExecutionTestClient(t, server.URL)
+	result, err := client.Result(context.Background(), "run-1")
+	if err != nil {
+		t.Fatalf("Result() error = %v", err)
+	}
+	if result.SchemaVersion != "v1" || string(result.Output) != `{"schemaVersion":"v1","summary":"ok"}` {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
 func TestClientResultMapsFailedRunBeforeSchemaValidation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"run":{"summary":{"runId":"run-1","status":"RUN_STATUS_FAILED","error":"agent execution failed: upstream disconnected"}}}`))

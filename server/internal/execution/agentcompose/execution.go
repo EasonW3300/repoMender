@@ -33,7 +33,7 @@ const (
 	maxConnectFrameBytes = 4 << 20
 )
 
-const diagnosticOutputSchema = `{"type":"object","required":["schemaVersion","summary"],"properties":{"schemaVersion":{"const":"v1"},"summary":{"type":"string"}},"additionalProperties":true}`
+const diagnosticOutputSchema = `{"type":"object","required":["schemaVersion","summary"],"properties":{"schemaVersion":{"type":"string","const":"v1"},"summary":{"type":"string"}},"additionalProperties":false}`
 
 type runAgentRequest struct {
 	ProjectID        string `json:"projectId"`
@@ -307,21 +307,48 @@ func (c *Client) Result(ctx context.Context, runID string) (execution.Result, er
 		}
 		return execution.Result{}, fmt.Errorf("%w: terminal run failed", ErrAgentFailed)
 	}
-	output := []byte(response.Run.ResultJSON)
-	if len(output) == 0 {
-		output = []byte(response.Run.Output)
+	// AC's resultJson is runtime metadata for the provider, while output is the
+	// agent's textual result. Prefer output and retain resultJson as a legacy
+	// fallback for older daemons that returned the structured result there.
+	output := []byte(response.Run.Output)
+	if len(bytes.TrimSpace(output)) == 0 {
+		output = []byte(response.Run.ResultJSON)
 	}
-	var schema struct {
-		SchemaVersion string `json:"schemaVersion"`
-	}
-	if len(output) == 0 || json.Unmarshal(output, &schema) != nil || schema.SchemaVersion == "" {
+	envelope, schemaVersion, ok := extractResultEnvelope(output)
+	if !ok {
 		return execution.Result{}, fmt.Errorf("%w: terminal result does not match schema envelope", ErrMalformedResponse)
 	}
 	return execution.Result{
-		SchemaVersion: schema.SchemaVersion, RunID: runID, Status: status,
-		Output:     json.RawMessage(c.redactor.Redact(string(output))),
+		SchemaVersion: schemaVersion, RunID: runID, Status: status,
+		Output:     json.RawMessage(c.redactor.Redact(string(envelope))),
 		FinishedAt: parseTime(response.Run.Summary.CompletedAt),
 	}, nil
+}
+
+// extractResultEnvelope tolerates provider/runtime preambles while accepting
+// only a top-level JSON object that contains the required RepoMender fields.
+// This keeps diagnostic warnings from AC out of the persisted result without
+// weakening the adapter's schema-envelope check.
+func extractResultEnvelope(output []byte) (json.RawMessage, string, bool) {
+	for start := bytes.IndexByte(output, '{'); start >= 0; {
+		decoder := json.NewDecoder(bytes.NewReader(output[start:]))
+		var raw json.RawMessage
+		if decoder.Decode(&raw) == nil {
+			var envelope struct {
+				SchemaVersion string `json:"schemaVersion"`
+				Summary       string `json:"summary"`
+			}
+			if json.Unmarshal(raw, &envelope) == nil && envelope.SchemaVersion != "" && envelope.Summary != "" {
+				return raw, envelope.SchemaVersion, true
+			}
+		}
+		next := bytes.IndexByte(output[start+1:], '{')
+		if next < 0 {
+			break
+		}
+		start += next + 1
+	}
+	return nil, "", false
 }
 
 func (c *Client) doUnary(ctx context.Context, procedure string, input, output any) error {
