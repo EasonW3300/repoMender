@@ -149,6 +149,23 @@ func TestLoadRequiresAgentComposeEndpointWhenM3IsEnabled(t *testing.T) {
 	}
 }
 
+func TestLoadM4TasksFeatureFlag(t *testing.T) {
+	lookup := map[string]string{
+		"REPOMENDER_DATABASE_URL":     "postgres://localhost/repomender",
+		"REPOMENDER_FEATURE_M4_TASKS": "true",
+	}
+	cfg, err := load(func(key string) (string, bool) {
+		value, ok := lookup[key]
+		return value, ok
+	})
+	if err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	if !cfg.FeatureM4Tasks {
+		t.Fatal("expected M4 task feature flag to be enabled")
+	}
+}
+
 func TestLoadAcceptsAgentComposeConfiguration(t *testing.T) {
 	values := map[string]string{
 		"REPOMENDER_DATABASE_URL":            "postgres://example",

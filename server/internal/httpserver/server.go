@@ -15,6 +15,7 @@ import (
 	"github.com/EasonW3300/repoMender/server/internal/execution"
 	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
+	"github.com/EasonW3300/repoMender/server/internal/tasks"
 )
 
 // auth supplies identity controls, database constructs PostgreSQL stores, and
@@ -36,6 +37,7 @@ type Server struct {
 	oidc         auth.OIDCProvider
 	scm          *scm.Service
 	execution    execution.Adapter
+	tasks        *tasks.Service
 	cookieSecure bool
 }
 
@@ -72,6 +74,22 @@ func NewWithServices(
 	return server
 }
 
+// NewWithTaskServices keeps the M0-M3 constructor stable while adding the M4
+// task store only when its feature flag is enabled.
+func NewWithTaskServices(
+	checker HealthChecker,
+	service *auth.Service,
+	provider auth.OIDCProvider,
+	scmService *scm.Service,
+	taskService *tasks.Service,
+	cookieSecure bool,
+	readiness ...ReadinessDependency,
+) *Server {
+	server := NewWithServices(checker, service, provider, scmService, cookieSecure, readiness...)
+	server.tasks = taskService
+	return server
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", s.live)
@@ -101,6 +119,18 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/v1/internal/executions/{id}/events", s.executionEvents)
 		mux.HandleFunc("GET /api/v1/internal/executions/{id}/result", s.executionResult)
 		mux.HandleFunc("POST /api/v1/internal/executions/{id}/cancel", s.cancelExecution)
+	}
+	if s.auth != nil && s.tasks != nil {
+		mux.HandleFunc("GET /api/v1/tasks", s.listTasks)
+		mux.HandleFunc("POST /api/v1/tasks", s.createTask)
+		mux.HandleFunc("GET /api/v1/tasks/{id}", s.getTask)
+		mux.HandleFunc("POST /api/v1/tasks/{id}/cancel", s.cancelTask)
+		mux.HandleFunc("POST /api/v1/tasks/{id}/retry", s.retryTask)
+		mux.HandleFunc("GET /api/v1/tasks/{id}/runs", s.listTaskRuns)
+		mux.HandleFunc("GET /api/v1/runs", s.listRuns)
+		mux.HandleFunc("GET /api/v1/runs/{id}", s.getRun)
+		mux.HandleFunc("GET /api/v1/runs/{id}/events", s.runEvents)
+		mux.HandleFunc("GET /api/v1/audit-events", s.auditEvents)
 	}
 	return securityHeaders(mux)
 }
@@ -159,9 +189,13 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 		}
 		readiness = append(readiness, acClient)
 	}
+	var taskService *tasks.Service
+	if cfg.FeatureM4Tasks {
+		taskService = tasks.NewService(tasks.NewPostgreSQLStore(db))
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           NewWithServices(db, service, provider, scmService, cfg.CookieSecure, readiness...).Handler(),
+		Handler:           NewWithTaskServices(db, service, provider, scmService, taskService, cfg.CookieSecure, readiness...).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -53,7 +53,7 @@ jobs:
       - run: go vet ./...
       # These packages intentionally exercise migration rollback and table
       # cleanup against one service database, so package execution is serial.
-      - run: go test -p=1 -tags=integration ./internal/database ./internal/auth ./internal/scm
+      - run: go test -p=1 -tags=integration ./internal/database ./internal/auth ./internal/scm ./internal/tasks
 
   compose:
     runs-on: ubuntu-latest
