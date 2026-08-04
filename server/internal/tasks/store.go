@@ -553,18 +553,19 @@ func (s *PostgreSQLStore) ListEvidence(ctx context.Context, taskID string) ([]Ev
 	return evidenceItems, rows.Err()
 }
 
-func (s *PostgreSQLStore) SupersedeCodeReviews(ctx context.Context, repositoryID string, pullRequest int, newTaskID string) error {
+func (s *PostgreSQLStore) SupersedeCodeReviews(ctx context.Context, repositoryID, providerRepositoryID string, pullRequest int, newTaskID string) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `
-		UPDATE tasks SET status = 'superseded', superseded_by = $3, lease_owner = '', lease_until = NULL,
+		UPDATE tasks SET status = 'superseded', superseded_by = $4, lease_owner = '', lease_until = NULL,
 			finished_at = COALESCE(finished_at, now()), updated_at = now()
-		WHERE kind = 'code_review' AND id <> $3 AND repository_id = NULLIF($1, '')::uuid
-		  AND (payload->>'pullRequestNumber')::int = $2
-		  AND status <> 'superseded'`, repositoryID, pullRequest, newTaskID); err != nil {
+		WHERE kind = 'code_review' AND id <> $4
+		  AND (repository_id = NULLIF($1, '')::uuid OR (repository_id IS NULL AND payload->>'repositoryId' = NULLIF($2, '')))
+		  AND (payload->>'pullRequestNumber')::int = $3
+		  AND status <> 'superseded'`, repositoryID, providerRepositoryID, pullRequest, newTaskID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

@@ -70,7 +70,7 @@ func (*reviewTaskStore) CreateEvidence(context.Context, tasks.EvidenceInput) (ta
 func (*reviewTaskStore) ListEvidence(context.Context, string) ([]tasks.Evidence, error) {
 	return nil, nil
 }
-func (s *reviewTaskStore) SupersedeCodeReviews(context.Context, string, int, string) error {
+func (s *reviewTaskStore) SupersedeCodeReviews(context.Context, string, string, int, string) error {
 	s.superseded = true
 	return nil
 }

@@ -18,6 +18,8 @@ type Processor struct {
 	tasks     *tasks.Service
 	adapter   execution.Adapter
 	publisher Publisher
+	projectID string
+	agentName string
 	timeout   time.Duration
 }
 
@@ -31,6 +33,16 @@ func NewProcessor(taskService *tasks.Service, adapter execution.Adapter, timeout
 		publisher = publishers[0]
 	}
 	return Processor{tasks: taskService, adapter: adapter, publisher: publisher, timeout: timeout}
+}
+
+func (p Processor) WithProjectID(projectID string) Processor {
+	p.projectID = strings.TrimSpace(projectID)
+	return p
+}
+
+func (p Processor) WithAgentName(agentName string) Processor {
+	p.agentName = strings.TrimSpace(agentName)
+	return p
 }
 
 func (p Processor) Process(ctx context.Context, task tasks.Task, run tasks.Run) (tasks.Status, string, string) {
@@ -50,9 +62,20 @@ func (p Processor) Process(ctx context.Context, task tasks.Task, run tasks.Run) 
 	if requestTimeout <= 0 {
 		requestTimeout = 15 * time.Minute
 	}
+	projectID := p.projectID
+	if projectID == "" {
+		projectID = task.RepositoryID
+	}
+	if projectID == "" {
+		projectID = payload.RepositoryID
+	}
+	agentName := p.agentName
+	if agentName == "" {
+		agentName = "codex"
+	}
 	request, err := p.adapter.Start(ctx, execution.Request{
-		CorrelationID: run.CorrelationID, ProjectID: task.RepositoryID,
-		AgentName: "repomender-code-review", Repository: payload.CloneURL,
+		CorrelationID: run.CorrelationID, ProjectID: projectID,
+		AgentName: agentName, Repository: payload.CloneURL,
 		CommitSHA: payload.HeadSHA, Prompt: reviewPrompt(task, payload),
 		Timeout: requestTimeout, OutputSchemaJSON: OutputSchema,
 		Policy: execution.ResourcePolicy{Driver: "docker", Cleanup: "remove", NetworkEnabled: false},

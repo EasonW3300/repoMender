@@ -95,9 +95,9 @@ func run(args []string) error {
 					publisher = scm.NewService(scm.NewPostgreSQLStore(db), box, github)
 				}
 				if publisher != nil {
-					processor = review.NewProcessor(service, acClient, 15*time.Minute, publisher)
+					processor = review.NewProcessor(service, acClient, 15*time.Minute, publisher).WithProjectID(cfg.ACProjectID).WithAgentName(cfg.ACAgentName)
 				} else {
-					processor = review.NewProcessor(service, acClient, 15*time.Minute)
+					processor = review.NewProcessor(service, acClient, 15*time.Minute).WithProjectID(cfg.ACProjectID).WithAgentName(cfg.ACAgentName)
 				}
 			}
 			return worker.RunQueue(ctx, cfg.WorkerPoll, lease, workerOwner(), service, processor)

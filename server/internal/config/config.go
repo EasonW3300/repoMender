@@ -42,6 +42,8 @@ type Config struct {
 	GitLabAPIBaseURL     string
 	GitLabWebBaseURL     string
 	ACBaseURL            string
+	ACProjectID          string
+	ACAgentName          string
 	ACAuthToken          string
 	ACRequiredVersion    string
 	ACRequiredDriver     string
@@ -131,6 +133,8 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		GitLabAPIBaseURL:     valueOrDefault(lookup, "REPOMENDER_GITLAB_API_BASE_URL", "https://gitlab.com/api/v4"),
 		GitLabWebBaseURL:     valueOrDefault(lookup, "REPOMENDER_GITLAB_WEB_BASE_URL", "https://gitlab.com"),
 		ACBaseURL:            strings.TrimRight(valueOrDefault(lookup, "REPOMENDER_AC_BASE_URL", ""), "/"),
+		ACProjectID:          valueOrDefault(lookup, "REPOMENDER_AC_PROJECT_ID", ""),
+		ACAgentName:          valueOrDefault(lookup, "REPOMENDER_AC_AGENT_NAME", "codex"),
 		ACAuthToken:          valueOrDefault(lookup, "REPOMENDER_AC_AUTH_TOKEN", ""),
 		ACRequiredVersion:    valueOrDefault(lookup, "REPOMENDER_AC_REQUIRED_VERSION", ""),
 		ACRequiredDriver:     valueOrDefault(lookup, "REPOMENDER_AC_REQUIRED_DRIVER", "docker"),
@@ -189,6 +193,9 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if cfg.FeatureM5CodeReview && !allConfigured(githubValues) {
 		return Config{}, errors.New("GitHub App configuration is required when M5 code review is enabled")
+	}
+	if cfg.FeatureM5CodeReview && strings.TrimSpace(cfg.ACProjectID) == "" {
+		return Config{}, errors.New("REPOMENDER_AC_PROJECT_ID is required when M5 code review is enabled")
 	}
 
 	return cfg, nil

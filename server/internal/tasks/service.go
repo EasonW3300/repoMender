@@ -93,8 +93,8 @@ func (s *Service) Evidence(ctx context.Context, taskID string) ([]Evidence, erro
 	return s.store.ListEvidence(ctx, taskID)
 }
 
-func (s *Service) SupersedeCodeReviews(ctx context.Context, repositoryID string, pullRequest int, newTaskID string) error {
-	return s.store.SupersedeCodeReviews(ctx, repositoryID, pullRequest, newTaskID)
+func (s *Service) SupersedeCodeReviews(ctx context.Context, repositoryID, providerRepositoryID string, pullRequest int, newTaskID string) error {
+	return s.store.SupersedeCodeReviews(ctx, repositoryID, providerRepositoryID, pullRequest, newTaskID)
 }
 
 func normalizePayload(payload json.RawMessage) json.RawMessage {

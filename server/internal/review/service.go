@@ -53,8 +53,8 @@ func (s *Service) HandleWebhook(ctx context.Context, event scm.WebhookEvent) (ta
 	if err != nil {
 		return tasks.Task{}, false, err
 	}
-	if repositoryID != "" {
-		if err := s.tasks.SupersedeCodeReviews(ctx, repositoryID, prEvent.PullRequest, task.ID); err != nil {
+	if repositoryID != "" || prEvent.RepositoryID != "" {
+		if err := s.tasks.SupersedeCodeReviews(ctx, repositoryID, prEvent.RepositoryID, prEvent.PullRequest, task.ID); err != nil {
 			return tasks.Task{}, false, err
 		}
 	}

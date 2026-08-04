@@ -161,7 +161,7 @@ type Store interface {
 	ListFindings(context.Context, string) ([]Finding, error)
 	CreateEvidence(context.Context, EvidenceInput) (Evidence, error)
 	ListEvidence(context.Context, string) ([]Evidence, error)
-	SupersedeCodeReviews(context.Context, string, int, string) error
+	SupersedeCodeReviews(context.Context, string, string, int, string) error
 }
 
 type FindingInput struct {

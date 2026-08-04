@@ -55,3 +55,17 @@ func TestValidateResultRejectsUnknownAndUnsafeFields(t *testing.T) {
 		t.Fatal("unsafe finding path accepted")
 	}
 }
+
+func TestOutputSchemaIsValidStrictResponsesSchema(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal([]byte(OutputSchema), &schema); err != nil {
+		t.Fatalf("OutputSchema is not valid JSON: %v", err)
+	}
+	properties := schema["properties"].(map[string]any)
+	findings := properties["findings"].(map[string]any)
+	item := findings["items"].(map[string]any)
+	required := item["required"].([]any)
+	if len(required) != 9 {
+		t.Fatalf("strict Finding schema must require all 9 fields, got %d", len(required))
+	}
+}

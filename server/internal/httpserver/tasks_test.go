@@ -152,7 +152,7 @@ func (m *taskMemoryStore) ListEvidence(context.Context, string) ([]tasks.Evidenc
 	return []tasks.Evidence{}, nil
 }
 
-func (m *taskMemoryStore) SupersedeCodeReviews(context.Context, string, int, string) error {
+func (m *taskMemoryStore) SupersedeCodeReviews(context.Context, string, string, int, string) error {
 	return nil
 }
 

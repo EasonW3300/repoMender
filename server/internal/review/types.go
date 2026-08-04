@@ -56,7 +56,10 @@ var (
 	ErrInvalidResult    = errors.New("invalid code review result")
 )
 
-const OutputSchema = `{"type":"object","required":["schemaVersion","summary","findings"],"properties":{"schemaVersion":{"type":"string","const":"v1"},"summary":{"type":"string"},"findings":{"type":"array","maxItems":200,"items":{"type":"object","required":["severity","category","path","explanation"],"properties":{"severity":{"type":"string","enum":["critical","high","medium","low","info"]},"category":{"type":"string"},"path":{"type":"string"},"lineStart":{"type":"integer","minimum":1},"lineEnd":{"type":"integer","minimum":1},"explanation":{"type":"string"},"evidence":{"type":"object"},"confidence":{"type":"number","minimum":0,"maximum":1},"remediation":{"type":"string"}},"additionalProperties":false}}},"additionalProperties":false}`
+// OutputSchema avoids an unconstrained empty object because the Responses API
+// rejects object schemas without declared properties. Evidence remains stored
+// as raw JSON in RepoMender, while the wire contract uses a bounded string.
+const OutputSchema = `{"type":"object","required":["schemaVersion","summary","findings"],"properties":{"schemaVersion":{"type":"string","const":"v1"},"summary":{"type":"string"},"findings":{"type":"array","maxItems":200,"items":{"type":"object","required":["severity","category","path","lineStart","lineEnd","explanation","evidence","confidence","remediation"],"properties":{"severity":{"type":"string","enum":["critical","high","medium","low","info"]},"category":{"type":"string"},"path":{"type":"string"},"lineStart":{"anyOf":[{"type":"integer","minimum":1},{"type":"null"}]},"lineEnd":{"anyOf":[{"type":"integer","minimum":1},{"type":"null"}]},"explanation":{"type":"string"},"evidence":{"type":"string"},"confidence":{"anyOf":[{"type":"number","minimum":0,"maximum":1},{"type":"null"}]},"remediation":{"type":"string"}},"additionalProperties":false}}},"additionalProperties":false}`
 
 func EventFromWebhook(event scm.WebhookEvent) (PullRequestEvent, error) {
 	if event.EventType != "pull_request" {
@@ -166,6 +169,7 @@ func strconvInt(value any) (int, error) {
 // out exactly the immutable head commit represented by the webhook.
 type taskPayload struct {
 	Provider       string `json:"provider"`
+	RepositoryID   string `json:"repositoryId"`
 	RepositoryName string `json:"repositoryName"`
 	PullRequest    int    `json:"pullRequestNumber"`
 	Action         string `json:"action"`
@@ -191,7 +195,7 @@ func decodeTaskPayload(raw json.RawMessage) (taskPayload, error) {
 
 func buildTaskInput(event PullRequestEvent, repositoryID string) (tasks.CreateInput, error) {
 	payload, err := json.Marshal(taskPayload{
-		Provider: "github", RepositoryName: event.RepositoryName, PullRequest: event.PullRequest, Action: event.Action,
+		Provider: "github", RepositoryID: event.RepositoryID, RepositoryName: event.RepositoryName, PullRequest: event.PullRequest, Action: event.Action,
 		HeadSHA: event.HeadSHA, HeadBranch: event.HeadBranch, BaseBranch: event.BaseBranch,
 		CloneURL: event.CloneURL, WebURL: event.WebURL, Author: event.Author,
 		InstallationID: event.InstallationID,
