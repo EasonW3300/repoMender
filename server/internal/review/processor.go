@@ -136,6 +136,7 @@ func reviewPrompt(task tasks.Task, payload taskPayload) string {
 	return strings.Join([]string{
 		"Review the repository commit below for actionable defects.",
 		"Return only JSON matching the supplied schema; do not modify or publish code.",
+		"The sandbox provides a short-lived read-only GitHub token in GH_TOKEN and GITHUB_TOKEN. Use gh or an Authorization header with that token to fetch the private repository and inspect the exact immutable commit; never print or persist the token.",
 		"Repository: " + payload.CloneURL,
 		"Immutable commit: " + payload.HeadSHA,
 		"Pull request: " + fmt.Sprint(payload.PullRequest),
