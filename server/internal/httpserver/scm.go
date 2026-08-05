@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"github.com/EasonW3300/repoMender/server/internal/auth"
+	"github.com/EasonW3300/repoMender/server/internal/diagnosis"
 	"github.com/EasonW3300/repoMender/server/internal/review"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
+	"github.com/EasonW3300/repoMender/server/internal/tasks"
 )
 
 // auth sessions and CSRF checks protect connection mutations. scm.Service
@@ -155,7 +157,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, provider 
 		writeError(w, http.StatusRequestEntityTooLarge, "webhook_too_large")
 		return
 	}
-	if s.review != nil && provider == scm.ProviderGitHub {
+	if (s.review != nil || s.diagnosis != nil) && provider == scm.ProviderGitHub {
 		event, err := s.scm.VerifyWebhook(provider, r.Header, body)
 		if errors.Is(err, scm.ErrInvalidWebhook) {
 			writeError(w, http.StatusUnauthorized, "webhook_invalid")
@@ -169,10 +171,25 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, provider 
 			writeError(w, http.StatusInternalServerError, "webhook_failed")
 			return
 		}
-		task, actionable, err := s.review.HandleWebhook(r.Context(), event)
-		if errors.Is(err, review.ErrUnsupportedEvent) {
-			actionable = false
-			err = nil
+		var task tasks.Task
+		var actionable bool
+		if s.review != nil {
+			task, actionable, err = s.review.HandleWebhook(r.Context(), event)
+			if errors.Is(err, review.ErrUnsupportedEvent) {
+				actionable = false
+				err = nil
+			}
+		}
+		if !actionable && s.diagnosis != nil {
+			var diagnosisTask tasks.Task
+			diagnosisTask, actionable, err = s.diagnosis.HandleWebhook(r.Context(), event)
+			if errors.Is(err, diagnosis.ErrUnsupportedEvent) {
+				actionable = false
+				err = nil
+			}
+			if actionable {
+				task = diagnosisTask
+			}
 		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "review_event_invalid")

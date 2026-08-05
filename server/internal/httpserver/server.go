@@ -12,6 +12,7 @@ import (
 	"github.com/EasonW3300/repoMender/server/internal/auth"
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
+	"github.com/EasonW3300/repoMender/server/internal/diagnosis"
 	"github.com/EasonW3300/repoMender/server/internal/execution"
 	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
 	"github.com/EasonW3300/repoMender/server/internal/review"
@@ -40,6 +41,7 @@ type Server struct {
 	execution    execution.Adapter
 	tasks        *tasks.Service
 	review       *review.Service
+	diagnosis    *diagnosis.Service
 	cookieSecure bool
 }
 
@@ -106,6 +108,24 @@ func NewWithReviewServices(
 ) *Server {
 	server := NewWithTaskServices(checker, service, provider, scmService, taskService, cookieSecure, readiness...)
 	server.review = reviewService
+	return server
+}
+
+// NewWithDiagnosisServices adds M6 without changing the constructor used by
+// M0-M5 tests and deployments where the later feature flag remains disabled.
+func NewWithDiagnosisServices(
+	checker HealthChecker,
+	service *auth.Service,
+	provider auth.OIDCProvider,
+	scmService *scm.Service,
+	taskService *tasks.Service,
+	reviewService *review.Service,
+	diagnosisService *diagnosis.Service,
+	cookieSecure bool,
+	readiness ...ReadinessDependency,
+) *Server {
+	server := NewWithReviewServices(checker, service, provider, scmService, taskService, reviewService, cookieSecure, readiness...)
+	server.diagnosis = diagnosisService
 	return server
 }
 
@@ -216,9 +236,13 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 	if cfg.FeatureM5CodeReview && cfg.FeatureM2SCM && cfg.FeatureM4Tasks && scmService != nil && taskService != nil {
 		reviewService = review.NewService(taskService, scmService)
 	}
+	var diagnosisService *diagnosis.Service
+	if cfg.FeatureM6CIDiagnosis && cfg.FeatureM2SCM && cfg.FeatureM4Tasks && scmService != nil && taskService != nil {
+		diagnosisService = diagnosis.NewService(taskService, scmService)
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           NewWithReviewServices(db, service, provider, scmService, taskService, reviewService, cfg.CookieSecure, readiness...).Handler(),
+		Handler:           NewWithDiagnosisServices(db, service, provider, scmService, taskService, reviewService, diagnosisService, cfg.CookieSecure, readiness...).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

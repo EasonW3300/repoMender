@@ -1,6 +1,7 @@
 package scm
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto"
@@ -194,20 +195,77 @@ func (a *GitHubAdapter) InstallationToken(ctx context.Context, installationID st
 }
 
 func (a *GitHubAdapter) CreateCheckRun(ctx context.Context, token, repository, sha, summary string, findingCount int) error {
+	return a.createCheckRun(ctx, token, repository, sha, "RepoMender Code Review", summary, findingCount > 0)
+}
+
+func (a *GitHubAdapter) CreateDiagnosisCheckRun(ctx context.Context, token, repository, sha, summary string) error {
+	return a.createCheckRun(ctx, token, repository, sha, "RepoMender CI Diagnosis", summary, true)
+}
+
+func (a *GitHubAdapter) createCheckRun(ctx context.Context, token, repository, sha, name, summary string, actionRequired bool) error {
 	conclusion := "success"
-	if findingCount > 0 {
+	if actionRequired {
 		conclusion = "action_required"
 	}
 	body, err := json.Marshal(map[string]any{
-		"name": "RepoMender Code Review", "head_sha": sha, "status": "completed",
+		"name": name, "head_sha": sha, "status": "completed",
 		"conclusion": conclusion,
-		"output":     map[string]any{"title": "RepoMender review", "summary": summary},
+		"output":     map[string]any{"title": name, "summary": summary},
 	})
 	if err != nil {
 		return err
 	}
 	var response map[string]any
 	return a.tokenJSON(ctx, http.MethodPost, "/repos/"+repository+"/check-runs", token, body, &response)
+}
+
+// DownloadWorkflowLogs downloads the GitHub archive, bounds both compressed
+// and uncompressed data, and returns line-oriented text with source headers so
+// later evidence can identify the original Actions log file.
+func (a *GitHubAdapter) DownloadWorkflowLogs(ctx context.Context, token, repository string, runID int64) (string, error) {
+	if runID <= 0 || !validGitHubRepository(repository) {
+		return "", errors.New("invalid workflow log request")
+	}
+	body, err := a.tokenBytes(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/actions/runs/%d/logs", repository, runID), token, 8<<20)
+	if err != nil {
+		return "", err
+	}
+	archive, err := zip.NewReader(bytes.NewReader(body), int64(len(body)))
+	if err != nil {
+		return "", fmt.Errorf("decode workflow logs: %w", err)
+	}
+	var output strings.Builder
+	for _, entry := range archive.File {
+		if entry.FileInfo().IsDir() {
+			continue
+		}
+		reader, err := entry.Open()
+		if err != nil {
+			return "", err
+		}
+		content, readErr := io.ReadAll(io.LimitReader(reader, 8<<20+1))
+		_ = reader.Close()
+		if readErr != nil {
+			return "", readErr
+		}
+		if len(content) > 8<<20 {
+			return "", errors.New("workflow log entry exceeds limit")
+		}
+		if output.Len()+len(content) > 8<<20 {
+			return "", errors.New("workflow logs exceed limit")
+		}
+		if output.Len() > 0 {
+			output.WriteByte('\n')
+		}
+		output.WriteString("== ")
+		output.WriteString(strings.ReplaceAll(entry.Name, "\n", "_"))
+		output.WriteString(" ==\n")
+		output.Write(content)
+	}
+	if output.Len() == 0 {
+		return "", errors.New("workflow logs are empty")
+	}
+	return output.String(), nil
 }
 
 func (a *GitHubAdapter) CreateIssueComment(ctx context.Context, token, repository string, number int, bodyText string) error {
@@ -259,9 +317,37 @@ func (a *GitHubAdapter) VerifyWebhook(headers http.Header, body []byte) (Webhook
 				Login string `json:"login"`
 			} `json:"user"`
 		} `json:"pull_request"`
+		WorkflowRun struct {
+			ID         int64  `json:"id"`
+			Name       string `json:"name"`
+			HTMLURL    string `json:"html_url"`
+			LogsURL    string `json:"logs_url"`
+			HeadSHA    string `json:"head_sha"`
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"workflow_run"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return WebhookEvent{}, ErrInvalidWebhook
+	}
+	if eventType == "workflow_run" {
+		if payload.WorkflowRun.ID <= 0 || payload.WorkflowRun.HeadSHA == "" {
+			return WebhookEvent{}, ErrInvalidWebhook
+		}
+		// Normalize workflow-run payloads here so M6 business logic stays
+		// provider-neutral and never depends on GitHub's nested JSON shape.
+		return WebhookEvent{
+			DeliveryID: deliveryID,
+			EventType:  eventType,
+			Normalized: map[string]any{
+				"action": payload.Action, "conclusion": payload.WorkflowRun.Conclusion,
+				"installationId": payload.Installation.ID, "repositoryId": payload.Repository.ID,
+				"repository": payload.Repository.FullName, "cloneURL": payload.Repository.CloneURL,
+				"webURL": payload.WorkflowRun.HTMLURL, "workflowRunId": payload.WorkflowRun.ID,
+				"workflowName": payload.WorkflowRun.Name, "logsURL": payload.WorkflowRun.LogsURL,
+				"headSHA": payload.WorkflowRun.HeadSHA, "status": payload.WorkflowRun.Status,
+			},
+		}, nil
 	}
 	prNumber := payload.Number
 	if prNumber == 0 {
@@ -316,6 +402,33 @@ func (a *GitHubAdapter) tokenJSON(ctx context.Context, method, path, token strin
 		return fmt.Errorf("GitHub API returned %d", response.StatusCode)
 	}
 	return json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(output)
+}
+
+func (a *GitHubAdapter) tokenBytes(ctx context.Context, method, path, token string, maxBytes int64) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(a.config.APIBaseURL, "/")+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	response, err := a.client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, response.Body)
+		return nil, fmt.Errorf("GitHub API returned %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, errors.New("GitHub response exceeds limit")
+	}
+	return data, nil
 }
 
 func (a *GitHubAdapter) appJWT() (string, error) {

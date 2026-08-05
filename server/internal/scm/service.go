@@ -265,6 +265,47 @@ func (s *Service) PublishGitHubReview(ctx context.Context, repository, installat
 	return github.CreateIssueComment(ctx, token, repository, number, comment.String())
 }
 
+// FetchGitHubWorkflowLogs obtains a short-lived installation token only for
+// the current worker request; the token and provider archive never enter the
+// durable task payload or database.
+func (s *Service) FetchGitHubWorkflowLogs(ctx context.Context, repository, installationID string, runID int64) (string, error) {
+	adapter, ok := s.adapters[ProviderGitHub]
+	if !ok || !adapter.Available() {
+		return "", ErrProviderUnavailable
+	}
+	github, ok := adapter.(*GitHubAdapter)
+	if !ok {
+		return "", errors.New("GitHub adapter does not support workflow logs")
+	}
+	token, err := github.InstallationToken(ctx, installationID)
+	if err != nil {
+		return "", err
+	}
+	return github.DownloadWorkflowLogs(ctx, token, repository, runID)
+}
+
+// PublishGitHubDiagnosis publishes one concise, exact-commit check result.
+// Full redacted evidence remains in RepoMender rather than being copied into
+// an unbounded provider comment.
+func (s *Service) PublishGitHubDiagnosis(ctx context.Context, repository, installationID, sha, summary string) error {
+	adapter, ok := s.adapters[ProviderGitHub]
+	if !ok || !adapter.Available() {
+		return ErrProviderUnavailable
+	}
+	github, ok := adapter.(*GitHubAdapter)
+	if !ok {
+		return errors.New("GitHub adapter does not support diagnosis publication")
+	}
+	if !validGitHubRepository(repository) || len(summary) == 0 || len(summary) > 20000 {
+		return ErrInvalidWebhook
+	}
+	token, err := github.InstallationToken(ctx, installationID)
+	if err != nil {
+		return err
+	}
+	return github.CreateDiagnosisCheckRun(ctx, token, repository, sha, summary)
+}
+
 func validGitHubRepository(value string) bool {
 	parts := strings.Split(strings.TrimSpace(value), "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {

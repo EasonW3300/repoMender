@@ -12,6 +12,7 @@ import (
 
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
+	"github.com/EasonW3300/repoMender/server/internal/diagnosis"
 	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
 	"github.com/EasonW3300/repoMender/server/internal/httpserver"
 	"github.com/EasonW3300/repoMender/server/internal/review"
@@ -65,10 +66,10 @@ func run(args []string) error {
 			if lease < 5*time.Second {
 				lease = 5 * time.Second
 			}
-			var processor worker.TaskProcessor = worker.NewCoreProcessor(service)
-			if cfg.FeatureM5CodeReview {
+			processor := worker.NewMultiplexProcessor(worker.NewCoreProcessor(service))
+			if cfg.FeatureM5CodeReview || cfg.FeatureM6CIDiagnosis {
 				if !cfg.FeatureM3ACExecution {
-					return errors.New("M5 code review requires M3 AC execution")
+					return errors.New("M5/M6 execution requires M3 AC execution")
 				}
 				acClient, err := agentcompose.New(agentcompose.Config{
 					BaseURL: cfg.ACBaseURL, AuthToken: cfg.ACAuthToken,
@@ -78,26 +79,19 @@ func run(args []string) error {
 				if err != nil {
 					return err
 				}
-				var publisher review.Publisher
-				if cfg.FeatureM2SCM {
-					box, err := scm.NewSecretBox(cfg.SCMMasterKey)
-					if err != nil {
-						return err
-					}
-					github, err := scm.NewGitHubAdapter(scm.GitHubConfig{
-						AppID: cfg.GitHubAppID, Slug: cfg.GitHubAppSlug,
-						PrivateKeyPEM: cfg.GitHubPrivateKey, WebhookSecret: cfg.GitHubWebhookSecret,
-						APIBaseURL: cfg.GitHubAPIBaseURL, WebBaseURL: cfg.GitHubWebBaseURL,
-					}, nil)
-					if err != nil {
-						return err
-					}
-					publisher = scm.NewService(scm.NewPostgreSQLStore(db), box, github)
+				githubService, err := newGitHubService(cfg, db)
+				if err != nil {
+					return err
 				}
-				if publisher != nil {
-					processor = review.NewProcessor(service, acClient, 15*time.Minute, publisher).WithProjectID(cfg.ACProjectID).WithAgentName(cfg.ACAgentName)
-				} else {
-					processor = review.NewProcessor(service, acClient, 15*time.Minute).WithProjectID(cfg.ACProjectID).WithAgentName(cfg.ACAgentName)
+				if cfg.FeatureM5CodeReview {
+					processor.Register(tasks.KindCodeReview,
+						review.NewProcessor(service, acClient, 15*time.Minute, githubService).
+							WithProjectID(cfg.ACProjectID).WithAgentName(cfg.ACAgentName))
+				}
+				if cfg.FeatureM6CIDiagnosis {
+					processor.Register(tasks.KindCIDiagnosis,
+						diagnosis.NewProcessor(service, acClient, githubService, 15*time.Minute, cfg.ACSensitivePatterns).
+							WithProjectID(cfg.ACProjectID).WithAgentName(cfg.ACAgentName))
 				}
 			}
 			return worker.RunQueue(ctx, cfg.WorkerPoll, lease, workerOwner(), service, processor)
@@ -120,6 +114,22 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func newGitHubService(cfg config.Config, db *database.DB) (*scm.Service, error) {
+	box, err := scm.NewSecretBox(cfg.SCMMasterKey)
+	if err != nil {
+		return nil, err
+	}
+	github, err := scm.NewGitHubAdapter(scm.GitHubConfig{
+		AppID: cfg.GitHubAppID, Slug: cfg.GitHubAppSlug,
+		PrivateKeyPEM: cfg.GitHubPrivateKey, WebhookSecret: cfg.GitHubWebhookSecret,
+		APIBaseURL: cfg.GitHubAPIBaseURL, WebBaseURL: cfg.GitHubWebBaseURL,
+	}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return scm.NewService(scm.NewPostgreSQLStore(db), box, github), nil
 }
 
 func workerOwner() string {

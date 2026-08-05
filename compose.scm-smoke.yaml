@@ -55,5 +55,27 @@ services:
       scm-fixture:
         condition: service_healthy
 
+  worker:
+    environment:
+      REPOMENDER_FEATURE_M2_SCM: "true"
+      REPOMENDER_MASTER_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      REPOMENDER_GITHUB_APP_ID: "1"
+      REPOMENDER_GITHUB_APP_SLUG: repomender-smoke
+      REPOMENDER_GITHUB_APP_PRIVATE_KEY_FILE: /run/scm-smoke/github.pem
+      REPOMENDER_GITHUB_WEBHOOK_SECRET: github-smoke-secret
+      REPOMENDER_GITHUB_API_BASE_URL: http://host.docker.internal:19090/github
+      REPOMENDER_GITHUB_WEB_BASE_URL: http://host.docker.internal:19090/github
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - scm-smoke-secrets:/run/scm-smoke:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      scm-keygen:
+        condition: service_completed_successfully
+      scm-fixture:
+        condition: service_healthy
+
 volumes:
   scm-smoke-secrets:

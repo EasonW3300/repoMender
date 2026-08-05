@@ -1,0 +1,20 @@
+# Local-only M6 overlay. It enables the dependency chain while reusing the
+# SCM fixture's ephemeral GitHub App key and provider endpoints.
+services:
+  api:
+    environment:
+      REPOMENDER_FEATURE_M3_AC_EXECUTION: "true"
+      REPOMENDER_FEATURE_M4_TASKS: "true"
+      REPOMENDER_FEATURE_M5_CODE_REVIEW: "true"
+      REPOMENDER_FEATURE_M6_CI_DIAGNOSIS: "true"
+      REPOMENDER_AC_BASE_URL: ${REPOMENDER_AC_BASE_URL:-http://host.docker.internal:7410}
+      REPOMENDER_AC_PROJECT_ID: ${REPOMENDER_AC_PROJECT_ID:-}
+
+  worker:
+    environment:
+      REPOMENDER_FEATURE_M3_AC_EXECUTION: "true"
+      REPOMENDER_FEATURE_M4_TASKS: "true"
+      REPOMENDER_FEATURE_M5_CODE_REVIEW: "true"
+      REPOMENDER_FEATURE_M6_CI_DIAGNOSIS: "true"
+      REPOMENDER_AC_BASE_URL: ${REPOMENDER_AC_BASE_URL:-http://host.docker.internal:7410}
+      REPOMENDER_AC_PROJECT_ID: ${REPOMENDER_AC_PROJECT_ID:-}

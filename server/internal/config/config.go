@@ -27,6 +27,7 @@ type Config struct {
 	FeatureM3ACExecution bool
 	FeatureM4Tasks       bool
 	FeatureM5CodeReview  bool
+	FeatureM6CIDiagnosis bool
 	FeatureGitLab        bool
 	SCMMasterKey         []byte
 	GitHubAppID          int64
@@ -91,6 +92,10 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	featureM6CIDiagnosis, err := boolOrDefault(lookup, "REPOMENDER_FEATURE_M6_CI_DIAGNOSIS", false)
+	if err != nil {
+		return Config{}, err
+	}
 	masterKey, err := decodeBase64Value(lookup, "REPOMENDER_MASTER_KEY")
 	if err != nil {
 		return Config{}, err
@@ -118,6 +123,7 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		FeatureM3ACExecution: featureM3ACExecution,
 		FeatureM4Tasks:       featureM4Tasks,
 		FeatureM5CodeReview:  featureM5CodeReview,
+		FeatureM6CIDiagnosis: featureM6CIDiagnosis,
 		FeatureGitLab:        featureGitLab,
 		SCMMasterKey:         masterKey,
 		GitHubAppID:          githubAppID,
@@ -196,6 +202,12 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if cfg.FeatureM5CodeReview && strings.TrimSpace(cfg.ACProjectID) == "" {
 		return Config{}, errors.New("REPOMENDER_AC_PROJECT_ID is required when M5 code review is enabled")
+	}
+	if cfg.FeatureM6CIDiagnosis && (!cfg.FeatureM2SCM || !cfg.FeatureM3ACExecution || !cfg.FeatureM4Tasks || !cfg.FeatureM5CodeReview) {
+		return Config{}, errors.New("REPOMENDER_FEATURE_M6_CI_DIAGNOSIS requires M2 SCM, M3 AC execution, M4 tasks, and M5 code review")
+	}
+	if cfg.FeatureM6CIDiagnosis && strings.TrimSpace(cfg.ACProjectID) == "" {
+		return Config{}, errors.New("REPOMENDER_AC_PROJECT_ID is required when M6 CI diagnosis is enabled")
 	}
 
 	return cfg, nil

@@ -45,8 +45,8 @@ remain disabled until their own acceptance gates pass.
 | M2 · SCM and repositories | GitHub-only scope implemented and real smoke passed; remote CI/merge pending |
 | M3 · Agent Compose execution adapter | Gate passed (`m3-ac-execution-adapter-mvp`) |
 | M4 · Task and audit core | Gate passed (`m4-task-audit-core-mvp`) |
-| M5 · Code review | Implementation in progress; real GitHub/AC smoke pending |
-| M6 · CI diagnosis | Not started |
+| M5 · Code review | MVP implementation and real private GitHub/AC smoke passed; merge pending |
+| M6 · CI diagnosis | MVP implementation and local Compose/AC smoke passed; real-provider gate pending |
 | M7 · Approval and governance | Not started |
 | M8 · Issue repair | Not started |
 | M9 · Automation and administration | Not started |

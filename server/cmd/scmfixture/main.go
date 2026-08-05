@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -44,6 +46,25 @@ func main() {
 			"html_url":       "https://github.com/smoke/github-repository",
 			"default_branch": "main", "visibility": "private", "language": "Go",
 		}}})
+	})
+	mux.HandleFunc("GET /github/repos/smoke/github-repository/actions/runs/99/logs", func(w http.ResponseWriter, _ *http.Request) {
+		var archive bytes.Buffer
+		writer := zip.NewWriter(&archive)
+		entry, err := writer.Create("ci/1.txt")
+		if err != nil {
+			http.Error(w, "fixture archive failed", http.StatusInternalServerError)
+			return
+		}
+		_, _ = entry.Write([]byte("TOKEN=fixture-secret\nFAIL: expected one result, found two\n"))
+		if err := writer.Close(); err != nil {
+			http.Error(w, "fixture archive failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(archive.Bytes())
+	})
+	mux.HandleFunc("POST /github/repos/smoke/github-repository/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"id": 9901, "name": "RepoMender CI Diagnosis", "status": "completed"})
 	})
 	mux.HandleFunc("GET /gitlab/oauth/authorize", func(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, r.URL.Query().Get("redirect_uri"), url.Values{
