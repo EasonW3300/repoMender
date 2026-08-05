@@ -176,6 +176,7 @@ func (p Processor) Process(ctx context.Context, task tasks.Task, run tasks.Run) 
 func diagnosisPrompt(task tasks.Task, payload taskPayload, chunks []LogChunk) string {
 	var builder strings.Builder
 	builder.WriteString("Analyze the failed GitHub Actions run below. Return only JSON matching the supplied schema; do not modify or publish code.\n")
+	builder.WriteString("The sandbox provides a short-lived read-only GitHub token in GH_TOKEN and GITHUB_TOKEN. Use a temporary credential helper or authenticated API to fetch a private repository; never print, persist, or include the token in a URL.\n")
 	builder.WriteString("Repository: ")
 	builder.WriteString(payload.CloneURL)
 	builder.WriteString("\nImmutable commit: ")

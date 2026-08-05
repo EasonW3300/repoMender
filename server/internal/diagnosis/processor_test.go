@@ -88,6 +88,9 @@ func TestProcessorRedactsBeforeEvidenceAndPrompt(t *testing.T) {
 	if strings.Contains(adapter.prompt, "super-secret") || strings.Contains(workflowProvider.published, "super-secret") {
 		t.Fatal("secret reached AC prompt or provider publication")
 	}
+	if !strings.Contains(adapter.prompt, "GH_TOKEN") || !strings.Contains(adapter.prompt, "never print, persist") {
+		t.Fatal("private repository credential guidance missing from AC prompt")
+	}
 	if len(store.evidence) == 0 || strings.Contains(string(store.evidence[0].Content), "super-secret") {
 		t.Fatalf("redacted evidence missing or leaked: %+v", store.evidence)
 	}
