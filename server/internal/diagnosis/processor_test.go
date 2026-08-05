@@ -128,3 +128,9 @@ func TestProcessorMapsControlledLogAndPublicationFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestSafeEventTextRemovesDatabaseUnsafeBytes(t *testing.T) {
+	if got := safeEventText("ok\x00\xff"); got != "ok�" {
+		t.Fatalf("safeEventText() = %q, want %q", got, "ok�")
+	}
+}

@@ -128,7 +128,7 @@ func (p Processor) Process(ctx context.Context, task tasks.Task, run tasks.Run) 
 	for event := range events {
 		payload, _ := json.Marshal(event)
 		if _, appendErr := p.tasks.AppendEvent(ctx, run.ID, tasks.RunEventInput{
-			Kind: string(event.Kind), Stream: event.Stream, Message: event.Message,
+			Kind: string(event.Kind), Stream: safeEventText(event.Stream), Message: safeEventText(event.Message),
 			Payload: payload, Terminal: event.Terminal,
 		}); appendErr != nil {
 			return tasks.StatusFailed, "m6_event_persist_failed", appendErr.Error()
@@ -240,4 +240,11 @@ func safeComponent(value string) string {
 		return "workflow"
 	}
 	return strings.Trim(strings.NewReplacer("/", "_", "\\", "_", "..", "_").Replace(value), ".")
+}
+
+// safeEventText keeps untrusted AC stream text valid for PostgreSQL TEXT and
+// SSE consumers. JSON payloads can represent escaped control bytes, but the
+// denormalized stream/message columns must never receive NUL or invalid UTF-8.
+func safeEventText(value string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(value, "\uFFFD"), "\x00", "")
 }
