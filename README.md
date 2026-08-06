@@ -49,7 +49,7 @@ remain disabled until their own acceptance gates pass.
 | M6 · CI diagnosis | Gate passed (`m6-ci-diagnosis-mvp`); local/real acceptance, native failure run, PR, merge, and cleanup passed |
 | M7 · Approval and governance | Gate passed (`m7-approval-governance-mvp`); local PostgreSQL/Compose acceptance, security tests, repository CI, PR, and merge passed |
 | M8 · Issue repair | Gate passed (`m8-issue-repair-mvp`); two-stage approval workflow, patch safety validation, PostgreSQL/Compose acceptance, repository CI, PR, and merge passed |
-| M9 · Automation and administration | Not started |
+| M9 · Automation and administration | Local gate passed; versioned templates, admin API/UI, webhook trigger governance, PostgreSQL concurrency/rollback coverage, and Compose verification complete; remote PR/tag pending |
 | M10 · Enterprise delivery hardening | Not started |
 
 The business modules must be delivered in the order M5 → M6 → M7 → M8. Each

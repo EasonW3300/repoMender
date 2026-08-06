@@ -761,24 +761,179 @@ function RepositoryDetail({ id, navigate }: { id: string; navigate: (route: stri
   );
 }
 
+type APIAutomation = {
+  id: string;
+  name: string;
+  description: string;
+  kind: "code_review" | "ci_diagnosis" | "issue_repair";
+  provider: string;
+  enabled: boolean;
+  repositoryScope: string[];
+  eventFilters: Array<{ event: string; actions: string[]; branches?: string[] }>;
+  agentTemplate: string;
+  executionBudget: number;
+  timeoutSeconds: number;
+  concurrencyLimit: number;
+  risk: string;
+  approvalPolicy: string;
+  version: number;
+  revision: number;
+  updatedAt: string;
+};
+
+type AutomationForm = {
+  name: string;
+  description: string;
+  kind: APIAutomation["kind"];
+  provider: "github";
+  repositoryScope: string;
+  event: string;
+  actions: string;
+  branches: string;
+  agentTemplate: string;
+  executionBudget: number;
+  timeoutSeconds: number;
+  concurrencyLimit: number;
+  risk: string;
+  approvalPolicy: string;
+};
+
+type AutomationRun = {
+  id: string;
+  templateVersion: number;
+  triggerKey: string;
+  repository: string;
+  taskId: string;
+  taskStatus: string;
+  status: string;
+  createdAt: string;
+};
+
+const emptyAutomationForm: AutomationForm = {
+  name: "", description: "", kind: "code_review", provider: "github", repositoryScope: "",
+  event: "pull_request", actions: "opened, synchronize", branches: "main", agentTemplate: "codex-reviewer",
+  executionBudget: 100, timeoutSeconds: 300, concurrencyLimit: 2, risk: "high", approvalPolicy: "required",
+};
+
 function AutomationsPage({ showToast }: { showToast: (message: string) => void }) {
-  const [step, setStep] = useState(0);
-  const steps = ["Basic information", "Trigger", "Execution", "Policy & approval", "Notification & output"];
+  const [items, setItems] = useState<APIAutomation[]>([]);
+  const [selected, setSelected] = useState<APIAutomation | null>(null);
+  const [runs, setRuns] = useState<AutomationRun[]>([]);
+  const [form, setForm] = useState<AutomationForm>(emptyAutomationForm);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/v1/automations?limit=100");
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "automation_unavailable");
+      setItems((body.automations ?? []) as APIAutomation[]);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "automation_unavailable");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  const select = async (item: APIAutomation) => {
+    setSelected(item);
+    setForm({
+      name: item.name, description: item.description, kind: item.kind, provider: "github",
+      repositoryScope: item.repositoryScope.join(", "), event: item.eventFilters[0]?.event || "pull_request",
+      actions: item.eventFilters[0]?.actions.join(", ") || "opened", branches: item.eventFilters[0]?.branches?.join(", ") || "",
+      agentTemplate: item.agentTemplate, executionBudget: item.executionBudget, timeoutSeconds: item.timeoutSeconds,
+      concurrencyLimit: item.concurrencyLimit, risk: item.risk, approvalPolicy: item.approvalPolicy,
+    });
+    try {
+      const response = await fetch(`/api/v1/automations/${encodeURIComponent(item.id)}/runs?limit=20`);
+      const body = await response.json().catch(() => ({}));
+      if (response.ok) setRuns((body.runs ?? []) as AutomationRun[]);
+    } catch {
+      setRuns([]);
+    }
+  };
+
+  const updateField = <K extends keyof AutomationForm>(key: K, value: AutomationForm[K]) => setForm((current) => ({ ...current, [key]: value }));
+  const adminHeaders = () => {
+    const password = window.prompt("Re-authenticate with the local administrator password to change automation configuration.");
+    if (!password) return null;
+    return { "Content-Type": "application/json", "X-CSRF-Token": csrfCookie(), "X-Reauth-Password": password };
+  };
+  const body = () => ({
+    name: form.name, description: form.description, kind: form.kind, provider: form.provider,
+    repositoryScope: form.repositoryScope.split(",").map((value) => value.trim()).filter(Boolean),
+    eventFilters: [{ event: form.event, actions: form.actions.split(",").map((value) => value.trim()).filter(Boolean), branches: form.branches.split(",").map((value) => value.trim()).filter(Boolean) }],
+    agentTemplate: form.agentTemplate, executionBudget: Number(form.executionBudget), timeoutSeconds: Number(form.timeoutSeconds),
+    concurrencyLimit: Number(form.concurrencyLimit), risk: form.risk, approvalPolicy: form.approvalPolicy,
+    ...(selected ? { expectedRevision: selected.revision } : {}),
+  });
+  const save = async () => {
+    const headers = adminHeaders();
+    if (!headers) return;
+    const response = await fetch(selected ? `/api/v1/automations/${encodeURIComponent(selected.id)}` : "/api/v1/automations", {
+      method: selected ? "PUT" : "POST", headers, body: JSON.stringify(body()),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) { setMessage(result.error || "automation_save_failed"); return; }
+    showToast(selected ? "Automation draft saved" : "Automation draft created");
+    setSelected(result.automation);
+    await load();
+  };
+  const publish = async () => {
+    if (!selected) return;
+    const headers = adminHeaders();
+    if (!headers) return;
+    const response = await fetch(`/api/v1/automations/${encodeURIComponent(selected.id)}/publish`, { method: "POST", headers, body: JSON.stringify({ expectedRevision: selected.revision }) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) { setMessage(result.error || "automation_publish_failed"); return; }
+    setSelected(result.automation); showToast("Automation version published"); await load();
+  };
+  const toggle = async () => {
+    if (!selected) return;
+    const headers = adminHeaders();
+    if (!headers) return;
+    const action = selected.enabled ? "disable" : "enable";
+    const response = await fetch(`/api/v1/automations/${encodeURIComponent(selected.id)}/${action}`, { method: "POST", headers, body: JSON.stringify({ expectedRevision: selected.revision }) });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) { setMessage(result.error || "automation_state_change_failed"); return; }
+    setSelected(result.automation); showToast(selected.enabled ? "Automation disabled" : "Automation activated"); await load();
+  };
+
   return (
     <>
-      <PageHeader eyebrow="Automation · Editor" title="PR code review" description="Configure triggers, agent execution, and enterprise guardrails." actions={<><button className="secondary-button" onClick={() => showToast("Draft saved locally")}>Save draft</button><button className="primary-button" onClick={() => showToast("Automation published")}>Publish automation</button></>} />
+      <PageHeader eyebrow="Automation · Administration" title="Automations" description="Versioned templates, scoped triggers, governed budgets, and auditable run history." actions={<><button className="secondary-button" onClick={() => { setSelected(null); setForm(emptyAutomationForm); }}>New template</button><button className="secondary-button" onClick={() => void load()}>Refresh</button></>} />
+      {message ? <div className="identity-message" role="status">M9 API: {message}</div> : null}
       <div className="automation-layout">
-        <aside className="wizard-nav">{steps.map((item, index) => <button key={item} className={step === index ? "active" : ""} onClick={() => setStep(index)}><i>{index + 1}</i>{item}</button>)}</aside>
+        <aside className="panel wizard-nav"><div className="panel-heading"><div><span className="eyebrow">Template catalog</span><h2>{loading ? "Loading…" : `${items.length} templates`}</h2></div></div>{items.map((item) => <button key={item.id} className={selected?.id === item.id ? "active" : ""} onClick={() => void select(item)}><i>{item.enabled ? "✓" : "·"}</i><span>{item.name}<small>{item.kind.replaceAll("_", " ")} · v{item.version}</small></span></button>)}{!loading && !items.length ? <div className="empty-state"><strong>No templates</strong><span>Create a draft to start a governed workflow.</span></div> : null}</aside>
         <section className="panel automation-form">
-          <div className="panel-heading"><div><span className="eyebrow">Step {step + 1} of 5</span><h2>{steps[step]}</h2></div><button className="secondary-button">YAML mode</button></div>
-          {step === 0 ? <div className="form-grid"><label className="full-field">Automation name<input defaultValue="PR Code Review · Payments" /></label><label className="full-field">Description<input defaultValue="Multi-agent review for Payments Platform pull requests." /></label><label>Repository scope<select defaultValue="payments-api"><option>payments-api</option><option>All Payments repositories</option></select></label><label>Agent template<select defaultValue="Senior Go Reviewer v4.2"><option>Senior Go Reviewer v4.2</option><option>Security Reviewer v2.8</option></select></label></div> : null}
-          {step === 1 ? <div className="form-grid"><label>Event<select><option>Pull request opened or updated</option><option>Push to protected branch</option></select></label><label>Target branches<input defaultValue="main, release/*" /></label><label className="full-field">Ignored paths<input defaultValue="docs/**, generated/**" /></label></div> : null}
-          {step === 2 ? <div className="form-grid"><label>Model<select><option>GPT-5.4</option><option>Claude Sonnet</option></select></label><label>Timeout<select><option>20 minutes</option><option>40 minutes</option></select></label><label>Concurrency<input type="number" defaultValue="3" /></label><label>Retry policy<select><option>Twice on infrastructure failure</option></select></label></div> : null}
-          {step === 3 ? <div className="form-grid"><label>Policy set<select><option>Payments Standard Guardrails</option></select></label><label>Approval rule<select><option>Critical and high patches</option></select></label><label className="toggle-field full-field"><span><strong>Allow suggested patches</strong><small>Agent may prepare a patch but cannot merge it.</small></span><input type="checkbox" defaultChecked /></label><label className="toggle-field full-field"><span><strong>External network</strong><small>Require approval for destinations outside the allowlist.</small></span><input type="checkbox" /></label></div> : null}
-          {step === 4 ? <div className="form-grid"><label>Slack channel<input defaultValue="#payments-engineering" /></label><label>Output action<select><option>Post review summary</option><option>Create repair task</option></select></label><label className="toggle-field full-field"><span><strong>Create repair task for critical findings</strong><small>Only when confidence is at least 90%.</small></span><input type="checkbox" defaultChecked /></label></div> : null}
-          <div className="panel-footer"><button className="secondary-button" disabled={step === 0} onClick={() => setStep((current) => Math.max(0, current - 1))}>Back</button><button className="primary-button" disabled={step === steps.length - 1} onClick={() => setStep((current) => Math.min(steps.length - 1, current + 1))}>Continue</button></div>
+          <div className="panel-heading"><div><span className="eyebrow">{selected ? `Revision ${selected.revision} · version ${selected.version}` : "Draft template"}</span><h2>{selected?.name || "Create automation"}</h2></div>{selected ? <Status tone={selected.enabled ? "success" : "neutral"}>{selected.enabled ? "Active" : "Disabled"}</Status> : null}</div>
+          <div className="form-grid">
+            <label className="full-field">Name<input value={form.name} onChange={(event) => updateField("name", event.target.value)} placeholder="Payments PR review" /></label>
+            <label className="full-field">Description<textarea rows={2} value={form.description} onChange={(event) => updateField("description", event.target.value)} /></label>
+            <label>Workflow kind<select value={form.kind} onChange={(event) => { const kind = event.target.value as AutomationForm["kind"]; updateField("kind", kind); updateField("event", kind === "code_review" ? "pull_request" : kind === "ci_diagnosis" ? "workflow_run" : "issues"); updateField("actions", kind === "ci_diagnosis" ? "completed" : "opened"); }}><option value="code_review">Code review</option><option value="ci_diagnosis">CI diagnosis</option><option value="issue_repair">Issue repair</option></select></label>
+            <label>Provider<select value={form.provider} disabled><option value="github">GitHub</option></select></label>
+            <label className="full-field">Repository scope<input value={form.repositoryScope} onChange={(event) => updateField("repositoryScope", event.target.value)} placeholder="acme/payments, acme/ledger" /></label>
+            <label>Event<input value={form.event} onChange={(event) => updateField("event", event.target.value)} /></label>
+            <label>Actions<input value={form.actions} onChange={(event) => updateField("actions", event.target.value)} /></label>
+            <label className="full-field">Branches<input value={form.branches} onChange={(event) => updateField("branches", event.target.value)} placeholder="main" /></label>
+            <label>Agent template<input value={form.agentTemplate} onChange={(event) => updateField("agentTemplate", event.target.value)} /></label>
+            <label>Execution budget<input type="number" min={1} value={form.executionBudget} onChange={(event) => updateField("executionBudget", Number(event.target.value))} /></label>
+            <label>Timeout seconds<input type="number" min={30} max={3600} value={form.timeoutSeconds} onChange={(event) => updateField("timeoutSeconds", Number(event.target.value))} /></label>
+            <label>Concurrency<input type="number" min={1} max={20} value={form.concurrencyLimit} onChange={(event) => updateField("concurrencyLimit", Number(event.target.value))} /></label>
+            <label>Risk<select value={form.risk} onChange={(event) => updateField("risk", event.target.value)}><option>low</option><option>medium</option><option>high</option><option>critical</option></select></label>
+            <label>Approval policy<select value={form.approvalPolicy} onChange={(event) => updateField("approvalPolicy", event.target.value)}><option value="required">Required</option><option value="risk_based">Risk based</option></select></label>
+          </div>
+          <div className="panel-footer"><button className="secondary-button" onClick={() => void save()}>Save draft</button>{selected ? <><button className="secondary-button" onClick={() => void publish()}>Publish version</button><button className={selected.enabled ? "danger-button" : "primary-button"} onClick={() => void toggle()}>{selected.enabled ? "Disable" : "Activate"}</button></> : null}</div>
         </section>
       </div>
+      {selected ? <section className="panel section-gap"><div className="panel-heading"><div><span className="eyebrow">Run history · exact template version retained</span><h2>{runs.length} recent runs</h2></div><Status tone={selected.enabled ? "success" : "neutral"}>{selected.enabled ? "New triggers accepted" : "No new triggers"}</Status></div>{runs.length ? <div className="table-scroll"><table><thead><tr><th>Run</th><th>Repository</th><th>Config</th><th>Task</th><th>Status</th><th>Created</th></tr></thead><tbody>{runs.map((run) => <tr key={run.id}><td>{run.id.slice(0, 12)}<small>{run.triggerKey}</small></td><td>{run.repository}</td><td>v{run.templateVersion}</td><td>{run.taskId.slice(0, 12)}</td><td><Status tone={taskTone(run.taskStatus)}>{taskStatusLabel(run.taskStatus)}</Status></td><td>{new Date(run.createdAt).toLocaleString()}</td></tr>)}</tbody></table></div> : <div className="empty-state"><strong>No runs yet</strong><span>Webhook delivery creates a run only when provider, event, repository scope, and approval policy match.</span></div>}</section> : null}
     </>
   );
 }
@@ -967,17 +1122,43 @@ function ExecutionDiagnosticPage({ navigate }: { navigate: (route: string) => vo
 }
 
 function SettingsPage() {
+  const [cards, setCards] = useState<Array<[string, string, string]>>([
+    ["Source integrations", "Reading SCM health…", "Loading"],
+    ["Agent Compose", "Reading runtime health…", "Loading"],
+    ["Agent templates", "Reading governed templates…", "Loading"],
+    ["Budget use", "Reading configured budgets…", "Loading"],
+    ["Audit & retention", "Reading retention policy…", "Loading"],
+    ["Audit lookup", "Automation changes are queryable by resource type.", "Available"],
+  ]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch("/api/v1/admin/automation-overview");
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || "admin_overview_unavailable");
+          const scm = body.health?.scm || {};
+          const ac = body.health?.agentCompose || {};
+          const providers = Object.entries(scm.providers || {}).filter(([, value]) => value).map(([key]) => key).join(", ") || "No provider available";
+          setCards([
+            ["Source integrations", `${providers} · provider adapter health`, scm.status === "configured" ? "Healthy" : "Unavailable"],
+            ["Agent Compose", `${ac.version || "No version"} · execution readiness`, ac.status === "ready" ? "Healthy" : ac.status === "unconfigured" ? "Disabled" : "Warning"],
+            ["Agent templates", `${body.agentTemplates?.length || 0} governed Agent templates`, `${body.templates?.enabled || 0} active`],
+            ["Budget use", `${body.budgetUse?.configured || 0} configured units · ${body.budgetUse?.activeRuns || 0} active runs`, "Tracked"],
+            ["Audit & retention", `${body.retention?.auditDays || 365}-day audit view · ${body.retention?.runHistoryDays || 365}-day run view`, body.retention?.enforcement || "Active"],
+            ["Audit lookup", body.audit?.lookupPath || "/api/v1/audit-events?resourceType=automation", "Available"],
+          ]);
+        } catch {
+          setCards((current) => current.map(([title, description]) => [title, description === "Reading SCM health…" ? "M9 administration API unavailable" : description, "Unavailable"]));
+        }
+      })();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   return (
     <>
       <PageHeader eyebrow="Platform administration" title="Settings" description="Integrations, models, runtimes, access, and governance." />
-      <section className="settings-grid">{[
-        ["Source integrations", "GitHub Enterprise connected · 12 repositories", "Healthy"],
-        ["Models & providers", "OpenAI and Anthropic · automatic fallback enabled", "2 providers"],
-        ["Runtime environments", "Docker healthy · BoxLite unavailable on this host", "1 warning"],
-        ["Secrets", "8 scoped credentials · no expiring credentials", "Protected"],
-        ["Members & roles", "34 members · 5 custom roles", "SSO enforced"],
-        ["Audit & retention", "365-day event retention · export enabled", "Active"],
-      ].map(([title, description, state]) => <button className="settings-card" key={title}><span><strong>{title}</strong><small>{description}</small></span><Status tone={state.includes("warning") ? "warning" : "neutral"}>{state}</Status></button>)}</section>
+      <section className="settings-grid">{cards.map(([title, description, state]) => <button className="settings-card" key={title}><span><strong>{title}</strong><small>{description}</small></span><Status tone={state.includes("Warning") || state.includes("Unavailable") ? "warning" : state === "Healthy" ? "success" : "neutral"}>{state}</Status></button>)}</section>
     </>
   );
 }

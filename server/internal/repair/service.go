@@ -76,6 +76,44 @@ func (s *Service) CreateFromIssue(ctx context.Context, issue Issue, actorID stri
 	return repair, nil
 }
 
+// BindAutomationTask attaches the M9-created task to the normal M8 repair
+// record without creating a second queue item. The worker can therefore use
+// the same two-stage plan/patch approval flow as a direct issue webhook.
+func (s *Service) BindAutomationTask(ctx context.Context, task tasks.Task, issue Issue, actorID string) (Repair, error) {
+	if s == nil || s.store == nil || task.Kind != tasks.KindIssueRepair || task.ID == "" {
+		return Repair{}, ErrInvalidTrigger
+	}
+	if issue.Number <= 0 || strings.TrimSpace(issue.State) == "" {
+		if s.provider == nil {
+			return Repair{}, ErrInvalidTrigger
+		}
+		resolved, err := s.provider.ResolveIssue(ctx, issue.Repository, issue.InstallationID, issue.Number)
+		if err != nil {
+			return Repair{}, fmt.Errorf("%w: resolve issue: %v", ErrProviderFailure, err)
+		}
+		issue.Title, issue.Body, issue.WebURL, issue.State, issue.IsPullRequest = resolved.Title, resolved.Body, resolved.WebURL, resolved.State, resolved.IsPullRequest
+	}
+	if strings.TrimSpace(issue.BaseSHA) == "" && s.provider != nil {
+		base, err := s.provider.ResolveBaseSHA(ctx, issue.Repository, issue.InstallationID, issue.BaseBranch)
+		if err != nil {
+			return Repair{}, fmt.Errorf("%w: resolve base commit: %v", ErrProviderFailure, err)
+		}
+		issue.BaseSHA = base
+	}
+	if err := ValidateIssue(issue, s.now().UTC()); err != nil {
+		return Repair{}, err
+	}
+	created, err := s.store.Create(ctx, CreateInput{Trigger: TriggerGitHubIssue, SourceKey: task.SourceKey,
+		TaskID: task.ID, CreatedBy: actorID, Issue: issue, CreatedAt: s.now().UTC()})
+	if err != nil {
+		if existing, getErr := s.store.GetByTask(ctx, task.ID); getErr == nil {
+			return existing, nil
+		}
+		return Repair{}, err
+	}
+	return created, nil
+}
+
 // CreateFromDiagnosis binds an M8 repair to a succeeded M6 task's immutable
 // commit. It intentionally does not infer a mutable branch tip or an issue
 // number from model output.
