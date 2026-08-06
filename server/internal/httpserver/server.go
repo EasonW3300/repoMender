@@ -255,6 +255,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/v1/issue-repairs/{id}/patch/consume", s.consumeRepairPatch)
 	}
 	if s.auth != nil && s.automations != nil {
+		mux.HandleFunc("GET /api/v1/admin/automation-overview", s.automationOverview)
 		mux.HandleFunc("GET /api/v1/automations", s.listAutomations)
 		mux.HandleFunc("POST /api/v1/automations", s.createAutomation)
 		mux.HandleFunc("GET /api/v1/automations/{id}", s.getAutomation)

@@ -1,10 +1,12 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/EasonW3300/repoMender/server/internal/auth"
 	"github.com/EasonW3300/repoMender/server/internal/automations"
@@ -32,6 +34,87 @@ type automationTriggerRequest struct {
 	Title         string          `json:"title,omitempty"`
 	TaskPayload   json.RawMessage `json:"taskPayload"`
 	SourcePayload json.RawMessage `json:"sourcePayload,omitempty"`
+}
+
+// automationOverview is the read-only administrative surface for the M9
+// settings page. It deliberately exposes health and aggregate budget data,
+// while detailed audit records remain behind the existing audit lookup API.
+func (s *Server) automationOverview(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAutomationAdmin(w, r, false); !ok {
+		return
+	}
+	items, err := s.automations.List(r.Context(), 200)
+	if err != nil {
+		writeAutomationError(w, err)
+		return
+	}
+	agentTemplates := make([]string, 0, len(items))
+	seenAgents := make(map[string]struct{}, len(items))
+	configuredBudget, activeRuns := 0, 0
+	for _, item := range items {
+		if item.Enabled {
+			configuredBudget += item.ExecutionBudget
+		}
+		if _, exists := seenAgents[item.AgentTemplate]; !exists {
+			seenAgents[item.AgentTemplate] = struct{}{}
+			agentTemplates = append(agentTemplates, item.AgentTemplate)
+		}
+		runs, runsErr := s.automations.Runs(r.Context(), item.ID, 200)
+		if runsErr != nil {
+			writeAutomationError(w, runsErr)
+			return
+		}
+		for _, run := range runs {
+			if run.TaskStatus == "queued" || run.TaskStatus == "running" || run.TaskStatus == "awaiting_approval" {
+				activeRuns++
+			}
+		}
+	}
+
+	health := map[string]any{"scm": map[string]any{"status": "unconfigured", "providers": map[string]bool{}},
+		"agentCompose": map[string]any{"status": "unconfigured"}}
+	if s.scm != nil {
+		providers := make(map[string]bool)
+		for provider, available := range s.scm.Providers() {
+			providers[string(provider)] = available
+		}
+		health["scm"] = map[string]any{"status": "configured", "providers": providers}
+	}
+	if s.execution != nil {
+		checkContext, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		version, healthErr := s.execution.Health(checkContext)
+		cancel()
+		status := "ready"
+		if healthErr != nil {
+			status = "unavailable"
+		}
+		health["agentCompose"] = map[string]any{"status": status, "version": version.Version, "error": errorString(healthErr)}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"health":         health,
+		"retention":      map[string]any{"auditDays": 365, "runHistoryDays": 365, "enforcement": "M10 policy boundary"},
+		"agentTemplates": agentTemplates,
+		"budgetUse":      map[string]int{"configured": configuredBudget, "activeRuns": activeRuns},
+		"audit":          map[string]string{"lookupPath": "/api/v1/audit-events?resourceType=automation", "resourceType": "automation"},
+		"templates":      map[string]int{"total": len(items), "enabled": countEnabled(items)},
+	})
+}
+
+func countEnabled(items []automations.Template) int {
+	count := 0
+	for _, item := range items {
+		if item.Enabled {
+			count++
+		}
+	}
+	return count
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (s *Server) listAutomations(w http.ResponseWriter, r *http.Request) {

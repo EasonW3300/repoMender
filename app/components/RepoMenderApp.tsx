@@ -1122,17 +1122,43 @@ function ExecutionDiagnosticPage({ navigate }: { navigate: (route: string) => vo
 }
 
 function SettingsPage() {
+  const [cards, setCards] = useState<Array<[string, string, string]>>([
+    ["Source integrations", "Reading SCM health…", "Loading"],
+    ["Agent Compose", "Reading runtime health…", "Loading"],
+    ["Agent templates", "Reading governed templates…", "Loading"],
+    ["Budget use", "Reading configured budgets…", "Loading"],
+    ["Audit & retention", "Reading retention policy…", "Loading"],
+    ["Audit lookup", "Automation changes are queryable by resource type.", "Available"],
+  ]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch("/api/v1/admin/automation-overview");
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(body.error || "admin_overview_unavailable");
+          const scm = body.health?.scm || {};
+          const ac = body.health?.agentCompose || {};
+          const providers = Object.entries(scm.providers || {}).filter(([, value]) => value).map(([key]) => key).join(", ") || "No provider available";
+          setCards([
+            ["Source integrations", `${providers} · provider adapter health`, scm.status === "configured" ? "Healthy" : "Unavailable"],
+            ["Agent Compose", `${ac.version || "No version"} · execution readiness`, ac.status === "ready" ? "Healthy" : ac.status === "unconfigured" ? "Disabled" : "Warning"],
+            ["Agent templates", `${body.agentTemplates?.length || 0} governed Agent templates`, `${body.templates?.enabled || 0} active`],
+            ["Budget use", `${body.budgetUse?.configured || 0} configured units · ${body.budgetUse?.activeRuns || 0} active runs`, "Tracked"],
+            ["Audit & retention", `${body.retention?.auditDays || 365}-day audit view · ${body.retention?.runHistoryDays || 365}-day run view`, body.retention?.enforcement || "Active"],
+            ["Audit lookup", body.audit?.lookupPath || "/api/v1/audit-events?resourceType=automation", "Available"],
+          ]);
+        } catch {
+          setCards((current) => current.map(([title, description]) => [title, description === "Reading SCM health…" ? "M9 administration API unavailable" : description, "Unavailable"]));
+        }
+      })();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   return (
     <>
       <PageHeader eyebrow="Platform administration" title="Settings" description="Integrations, models, runtimes, access, and governance." />
-      <section className="settings-grid">{[
-        ["Source integrations", "GitHub Enterprise connected · 12 repositories", "Healthy"],
-        ["Models & providers", "OpenAI and Anthropic · automatic fallback enabled", "2 providers"],
-        ["Runtime environments", "Docker healthy · BoxLite unavailable on this host", "1 warning"],
-        ["Secrets", "8 scoped credentials · no expiring credentials", "Protected"],
-        ["Members & roles", "34 members · 5 custom roles", "SSO enforced"],
-        ["Audit & retention", "365-day event retention · export enabled", "Active"],
-      ].map(([title, description, state]) => <button className="settings-card" key={title}><span><strong>{title}</strong><small>{description}</small></span><Status tone={state.includes("warning") ? "warning" : "neutral"}>{state}</Status></button>)}</section>
+      <section className="settings-grid">{cards.map(([title, description, state]) => <button className="settings-card" key={title}><span><strong>{title}</strong><small>{description}</small></span><Status tone={state.includes("Warning") || state.includes("Unavailable") ? "warning" : state === "Healthy" ? "success" : "neutral"}>{state}</Status></button>)}</section>
     </>
   );
 }
