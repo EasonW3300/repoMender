@@ -48,7 +48,7 @@ remain disabled until their own acceptance gates pass.
 | M5 · Code review | MVP implementation and real private GitHub/AC smoke passed; merged with the M6 delivery PR |
 | M6 · CI diagnosis | Gate passed (`m6-ci-diagnosis-mvp`); local/real acceptance, native failure run, PR, merge, and cleanup passed |
 | M7 · Approval and governance | Gate passed (`m7-approval-governance-mvp`); local PostgreSQL/Compose acceptance, security tests, repository CI, PR, and merge passed |
-| M8 · Issue repair | MVP implementation, two-stage approval workflow, patch safety validation, PostgreSQL/Compose acceptance passed; repository gates pending |
+| M8 · Issue repair | Gate passed (`m8-issue-repair-mvp`); two-stage approval workflow, patch safety validation, PostgreSQL/Compose acceptance, repository CI, PR, and merge passed |
 | M9 · Automation and administration | Not started |
 | M10 · Enterprise delivery hardening | Not started |
 
