@@ -11,6 +11,7 @@ import (
 
 	"github.com/EasonW3300/repoMender/server/internal/approvals"
 	"github.com/EasonW3300/repoMender/server/internal/auth"
+	"github.com/EasonW3300/repoMender/server/internal/automations"
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
 	"github.com/EasonW3300/repoMender/server/internal/diagnosis"
@@ -46,6 +47,7 @@ type Server struct {
 	diagnosis    *diagnosis.Service
 	approvals    *approvals.Service
 	repair       *repair.Service
+	automations  *automations.Service
 	cookieSecure bool
 }
 
@@ -172,6 +174,28 @@ func NewWithRepairServices(
 	return server
 }
 
+// NewWithAutomationServices adds M9 while preserving constructor signatures
+// used by M0-M8 tests and deployments where automation management is disabled.
+func NewWithAutomationServices(
+	checker HealthChecker,
+	service *auth.Service,
+	provider auth.OIDCProvider,
+	scmService *scm.Service,
+	taskService *tasks.Service,
+	reviewService *review.Service,
+	diagnosisService *diagnosis.Service,
+	approvalService *approvals.Service,
+	repairService *repair.Service,
+	automationService *automations.Service,
+	cookieSecure bool,
+	readiness ...ReadinessDependency,
+) *Server {
+	server := NewWithRepairServices(checker, service, provider, scmService, taskService, reviewService,
+		diagnosisService, approvalService, repairService, cookieSecure, readiness...)
+	server.automations = automationService
+	return server
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", s.live)
@@ -229,6 +253,19 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/v1/issue-repairs/{id}", s.getRepair)
 		mux.HandleFunc("POST /api/v1/issue-repairs/{id}/plan/consume", s.consumeRepairPlan)
 		mux.HandleFunc("POST /api/v1/issue-repairs/{id}/patch/consume", s.consumeRepairPatch)
+	}
+	if s.auth != nil && s.automations != nil {
+		mux.HandleFunc("GET /api/v1/automations", s.listAutomations)
+		mux.HandleFunc("POST /api/v1/automations", s.createAutomation)
+		mux.HandleFunc("GET /api/v1/automations/{id}", s.getAutomation)
+		mux.HandleFunc("PUT /api/v1/automations/{id}", s.updateAutomation)
+		mux.HandleFunc("DELETE /api/v1/automations/{id}", s.deleteAutomation)
+		mux.HandleFunc("POST /api/v1/automations/{id}/publish", s.publishAutomation)
+		mux.HandleFunc("POST /api/v1/automations/{id}/enable", s.enableAutomation)
+		mux.HandleFunc("POST /api/v1/automations/{id}/disable", s.disableAutomation)
+		mux.HandleFunc("POST /api/v1/automations/{id}/trigger", s.triggerAutomation)
+		mux.HandleFunc("GET /api/v1/automations/{id}/versions", s.automationVersions)
+		mux.HandleFunc("GET /api/v1/automations/{id}/runs", s.automationRuns)
 	}
 	return securityHeaders(mux)
 }
@@ -307,9 +344,14 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 	if cfg.FeatureM8IssueRepair && cfg.FeatureM7Approvals && cfg.FeatureM4Tasks && taskService != nil && approvalService != nil && scmService != nil {
 		repairService = repair.NewService(repair.NewPostgreSQLStore(db), taskService, approvalService, repair.NewSCMProvider(scmService))
 	}
+	var automationService *automations.Service
+	if cfg.FeatureM9Automations && taskService != nil {
+		automationService = automations.NewService(automations.NewPostgreSQLStore(db), taskService)
+	}
 	server := &http.Server{
-		Addr:              cfg.HTTPAddress,
-		Handler:           NewWithRepairServices(db, service, provider, scmService, taskService, reviewService, diagnosisService, approvalService, repairService, cfg.CookieSecure, readiness...).Handler(),
+		Addr: cfg.HTTPAddress,
+		Handler: NewWithAutomationServices(db, service, provider, scmService, taskService, reviewService, diagnosisService,
+			approvalService, repairService, automationService, cfg.CookieSecure, readiness...).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

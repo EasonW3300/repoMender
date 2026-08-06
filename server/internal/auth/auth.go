@@ -113,6 +113,21 @@ func (s *Service) LoginLocal(ctx context.Context, email, password string) (User,
 	return s.createSession(ctx, user)
 }
 
+// Reauthenticate verifies the local administrator credential immediately
+// before a sensitive configuration mutation. OIDC identities do not expose a
+// RepoMender-local password, so they must use the deployment's approved local
+// administrator session for this operation.
+func (s *Service) Reauthenticate(ctx context.Context, user User, password string) error {
+	if s == nil || user.AuthSource != "local" || strings.TrimSpace(password) == "" {
+		return ErrInvalidCredential
+	}
+	stored, hash, err := s.store.FindLocalUser(ctx, user.Email)
+	if err != nil || !stored.Active || stored.ID != user.ID || bcrypt.CompareHashAndPassword(hash, []byte(password)) != nil {
+		return ErrInvalidCredential
+	}
+	return nil
+}
+
 func (s *Service) LoginOIDC(ctx context.Context, identity Identity) (User, string, string, error) {
 	email, err := normalizeEmail(identity.Email)
 	if err != nil || identity.Subject == "" || !identity.EmailVerified {

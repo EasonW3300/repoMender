@@ -221,6 +221,19 @@ func TestLoadM8RequiresScmExecutionTasksAndApprovals(t *testing.T) {
 	}
 }
 
+func TestLoadM9RequiresTheCompleteBusinessChain(t *testing.T) {
+	env := map[string]string{
+		"REPOMENDER_DATABASE_URL":           "postgres://db",
+		"REPOMENDER_FEATURE_M9_AUTOMATIONS": "true",
+	}
+	if _, err := load(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	}); err == nil {
+		t.Fatal("expected M9 to require M2-M8 dependencies")
+	}
+}
+
 func TestLoadAcceptsAgentComposeConfiguration(t *testing.T) {
 	values := map[string]string{
 		"REPOMENDER_DATABASE_URL":            "postgres://example",

@@ -30,6 +30,7 @@ type Config struct {
 	FeatureM6CIDiagnosis bool
 	FeatureM7Approvals   bool
 	FeatureM8IssueRepair bool
+	FeatureM9Automations bool
 	FeatureGitLab        bool
 	SCMMasterKey         []byte
 	GitHubAppID          int64
@@ -106,6 +107,10 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	featureM9Automations, err := boolOrDefault(lookup, "REPOMENDER_FEATURE_M9_AUTOMATIONS", false)
+	if err != nil {
+		return Config{}, err
+	}
 	masterKey, err := decodeBase64Value(lookup, "REPOMENDER_MASTER_KEY")
 	if err != nil {
 		return Config{}, err
@@ -136,6 +141,7 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		FeatureM6CIDiagnosis: featureM6CIDiagnosis,
 		FeatureM7Approvals:   featureM7Approvals,
 		FeatureM8IssueRepair: featureM8IssueRepair,
+		FeatureM9Automations: featureM9Automations,
 		FeatureGitLab:        featureGitLab,
 		SCMMasterKey:         masterKey,
 		GitHubAppID:          githubAppID,
@@ -232,6 +238,16 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	}
 	if cfg.FeatureM8IssueRepair && strings.TrimSpace(cfg.ACProjectID) == "" {
 		return Config{}, errors.New("REPOMENDER_AC_PROJECT_ID is required when M8 issue repair is enabled")
+	}
+	if cfg.FeatureM9Automations && (!cfg.FeatureM2SCM || !cfg.FeatureM3ACExecution || !cfg.FeatureM4Tasks ||
+		!cfg.FeatureM5CodeReview || !cfg.FeatureM6CIDiagnosis || !cfg.FeatureM7Approvals || !cfg.FeatureM8IssueRepair) {
+		return Config{}, errors.New("REPOMENDER_FEATURE_M9_AUTOMATIONS requires M2 SCM through M8 issue repair")
+	}
+	if cfg.FeatureM9Automations && !allConfigured(githubValues) {
+		return Config{}, errors.New("GitHub App configuration is required when M9 automations are enabled")
+	}
+	if cfg.FeatureM9Automations && strings.TrimSpace(cfg.ACProjectID) == "" {
+		return Config{}, errors.New("REPOMENDER_AC_PROJECT_ID is required when M9 automations are enabled")
 	}
 
 	return cfg, nil
