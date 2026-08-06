@@ -26,6 +26,8 @@ type Config struct {
 	FeatureM2SCM         bool
 	FeatureM3ACExecution bool
 	FeatureM4Tasks       bool
+	FeatureM5CodeReview  bool
+	FeatureM6CIDiagnosis bool
 	FeatureGitLab        bool
 	SCMMasterKey         []byte
 	GitHubAppID          int64
@@ -41,6 +43,8 @@ type Config struct {
 	GitLabAPIBaseURL     string
 	GitLabWebBaseURL     string
 	ACBaseURL            string
+	ACProjectID          string
+	ACAgentName          string
 	ACAuthToken          string
 	ACRequiredVersion    string
 	ACRequiredDriver     string
@@ -84,6 +88,14 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	featureM5CodeReview, err := boolOrDefault(lookup, "REPOMENDER_FEATURE_M5_CODE_REVIEW", false)
+	if err != nil {
+		return Config{}, err
+	}
+	featureM6CIDiagnosis, err := boolOrDefault(lookup, "REPOMENDER_FEATURE_M6_CI_DIAGNOSIS", false)
+	if err != nil {
+		return Config{}, err
+	}
 	masterKey, err := decodeBase64Value(lookup, "REPOMENDER_MASTER_KEY")
 	if err != nil {
 		return Config{}, err
@@ -110,6 +122,8 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		FeatureM2SCM:         featureM2SCM,
 		FeatureM3ACExecution: featureM3ACExecution,
 		FeatureM4Tasks:       featureM4Tasks,
+		FeatureM5CodeReview:  featureM5CodeReview,
+		FeatureM6CIDiagnosis: featureM6CIDiagnosis,
 		FeatureGitLab:        featureGitLab,
 		SCMMasterKey:         masterKey,
 		GitHubAppID:          githubAppID,
@@ -125,6 +139,8 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		GitLabAPIBaseURL:     valueOrDefault(lookup, "REPOMENDER_GITLAB_API_BASE_URL", "https://gitlab.com/api/v4"),
 		GitLabWebBaseURL:     valueOrDefault(lookup, "REPOMENDER_GITLAB_WEB_BASE_URL", "https://gitlab.com"),
 		ACBaseURL:            strings.TrimRight(valueOrDefault(lookup, "REPOMENDER_AC_BASE_URL", ""), "/"),
+		ACProjectID:          valueOrDefault(lookup, "REPOMENDER_AC_PROJECT_ID", ""),
+		ACAgentName:          valueOrDefault(lookup, "REPOMENDER_AC_AGENT_NAME", "codex"),
 		ACAuthToken:          valueOrDefault(lookup, "REPOMENDER_AC_AUTH_TOKEN", ""),
 		ACRequiredVersion:    valueOrDefault(lookup, "REPOMENDER_AC_REQUIRED_VERSION", ""),
 		ACRequiredDriver:     valueOrDefault(lookup, "REPOMENDER_AC_REQUIRED_DRIVER", "docker"),
@@ -178,6 +194,21 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 			return Config{}, errors.New("REPOMENDER_AC_BASE_URL must be an absolute HTTP(S) URL")
 		}
 	}
+	if cfg.FeatureM5CodeReview && (!cfg.FeatureM2SCM || !cfg.FeatureM3ACExecution || !cfg.FeatureM4Tasks) {
+		return Config{}, errors.New("REPOMENDER_FEATURE_M5_CODE_REVIEW requires M2 SCM, M3 AC execution, and M4 tasks")
+	}
+	if cfg.FeatureM5CodeReview && !allConfigured(githubValues) {
+		return Config{}, errors.New("GitHub App configuration is required when M5 code review is enabled")
+	}
+	if cfg.FeatureM5CodeReview && strings.TrimSpace(cfg.ACProjectID) == "" {
+		return Config{}, errors.New("REPOMENDER_AC_PROJECT_ID is required when M5 code review is enabled")
+	}
+	if cfg.FeatureM6CIDiagnosis && (!cfg.FeatureM2SCM || !cfg.FeatureM3ACExecution || !cfg.FeatureM4Tasks || !cfg.FeatureM5CodeReview) {
+		return Config{}, errors.New("REPOMENDER_FEATURE_M6_CI_DIAGNOSIS requires M2 SCM, M3 AC execution, M4 tasks, and M5 code review")
+	}
+	if cfg.FeatureM6CIDiagnosis && strings.TrimSpace(cfg.ACProjectID) == "" {
+		return Config{}, errors.New("REPOMENDER_AC_PROJECT_ID is required when M6 CI diagnosis is enabled")
+	}
 
 	return cfg, nil
 }
@@ -190,6 +221,15 @@ func partiallyConfigured(values []bool) bool {
 		}
 	}
 	return configured != 0 && configured != len(values)
+}
+
+func allConfigured(values []bool) bool {
+	for _, value := range values {
+		if !value {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeBase64Value(lookup func(string) (string, bool), key string) ([]byte, error) {

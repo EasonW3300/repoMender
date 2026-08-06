@@ -22,6 +22,37 @@ type TaskProcessor interface {
 	Process(context.Context, tasks.Task, tasks.Run) (status tasks.Status, code, message string)
 }
 
+// MultiplexProcessor keeps the durable queue single-threaded per claim while
+// routing each provider-neutral task kind to its enabled business processor.
+// The M4 fallback remains available for kinds whose later module is disabled.
+type MultiplexProcessor struct {
+	defaultProcessor TaskProcessor
+	processors       map[tasks.Kind]TaskProcessor
+}
+
+func NewMultiplexProcessor(defaultProcessor TaskProcessor) *MultiplexProcessor {
+	return &MultiplexProcessor{defaultProcessor: defaultProcessor, processors: make(map[tasks.Kind]TaskProcessor)}
+}
+
+func (p *MultiplexProcessor) Register(kind tasks.Kind, processor TaskProcessor) {
+	if p != nil && processor != nil {
+		p.processors[kind] = processor
+	}
+}
+
+func (p *MultiplexProcessor) Process(ctx context.Context, task tasks.Task, run tasks.Run) (tasks.Status, string, string) {
+	if p == nil {
+		return tasks.StatusFailed, "processor_unavailable", "task processor is unavailable"
+	}
+	if processor := p.processors[task.Kind]; processor != nil {
+		return processor.Process(ctx, task, run)
+	}
+	if p.defaultProcessor == nil {
+		return tasks.StatusFailed, "processor_unavailable", "task processor is unavailable"
+	}
+	return p.defaultProcessor.Process(ctx, task, run)
+}
+
 type CoreProcessor struct {
 	service *tasks.Service
 }

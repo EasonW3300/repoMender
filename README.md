@@ -43,10 +43,10 @@ remain disabled until their own acceptance gates pass.
 | M0 · Engineering foundation | Gate passed |
 | M1 · Identity and access | Gate passed |
 | M2 · SCM and repositories | GitHub-only scope implemented and real smoke passed; remote CI/merge pending |
-| M3 · Agent Compose execution adapter | Not started |
-| M4 · Task and audit core | Not started |
-| M5 · Code review | Not started |
-| M6 · CI diagnosis | Not started |
+| M3 · Agent Compose execution adapter | Gate passed (`m3-ac-execution-adapter-mvp`) |
+| M4 · Task and audit core | Gate passed (`m4-task-audit-core-mvp`) |
+| M5 · Code review | MVP implementation and real private GitHub/AC smoke passed; merge pending |
+| M6 · CI diagnosis | MVP implementation, local Compose/AC smoke, and authorized real-provider replay passed; repository gates pending |
 | M7 · Approval and governance | Not started |
 | M8 · Issue repair | Not started |
 | M9 · Automation and administration | Not started |

@@ -21,14 +21,15 @@ const (
 )
 
 type Request struct {
-	CorrelationID string         `json:"correlationId"`
-	ProjectID     string         `json:"projectId"`
-	AgentName     string         `json:"agentName"`
-	Repository    string         `json:"repository"`
-	CommitSHA     string         `json:"commitSha"`
-	Prompt        string         `json:"prompt"`
-	Timeout       time.Duration  `json:"timeout"`
-	Policy        ResourcePolicy `json:"policy"`
+	CorrelationID    string         `json:"correlationId"`
+	ProjectID        string         `json:"projectId"`
+	AgentName        string         `json:"agentName"`
+	Repository       string         `json:"repository"`
+	CommitSHA        string         `json:"commitSha"`
+	Prompt           string         `json:"prompt"`
+	OutputSchemaJSON string         `json:"outputSchemaJson,omitempty"`
+	Timeout          time.Duration  `json:"timeout"`
+	Policy           ResourcePolicy `json:"policy"`
 }
 
 type ResourcePolicy struct {

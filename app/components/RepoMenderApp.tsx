@@ -144,7 +144,7 @@ function taskStatusLabel(status: string): string {
   return status.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function TasksPage({ navigate }: { navigate: (route: string) => void }) {
+function TasksPage({ navigate, kindFilter }: { navigate: (route: string) => void; kindFilter?: APITask["kind"] }) {
   const [items, setItems] = useState<APITask[]>([]);
   const [filter, setFilter] = useState("All");
   const [loading, setLoading] = useState(true);
@@ -154,7 +154,8 @@ function TasksPage({ navigate }: { navigate: (route: string) => void }) {
     setLoading(true);
     setMessage("");
     try {
-      const response = await fetch("/api/v1/tasks?limit=100");
+      const query = kindFilter ? `&kind=${encodeURIComponent(kindFilter)}` : "";
+      const response = await fetch(`/api/v1/tasks?limit=100${query}`);
       if (response.status === 401) {
         navigate("/login");
         return;
@@ -170,7 +171,7 @@ function TasksPage({ navigate }: { navigate: (route: string) => void }) {
     } finally {
       setLoading(false);
     }
-  }, [navigate]);
+  }, [kindFilter, navigate]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -182,7 +183,7 @@ function TasksPage({ navigate }: { navigate: (route: string) => void }) {
     : filter === "Running"
       ? items.filter((item) => item.status === "running")
       : items;
-  const rows: TaskRecord[] = visible.map((item) => ({
+	const rows: TaskRecord[] = visible.map((item) => ({
     id: item.id.slice(0, 12),
     type: taskKindLabel(item.kind),
     title: item.title,
@@ -192,12 +193,15 @@ function TasksPage({ navigate }: { navigate: (route: string) => void }) {
     agent: `Attempt ${item.attempts}/${item.maxAttempts}`,
     duration: "—",
     updated: new Date(item.updatedAt).toLocaleString(),
-    route: `/tasks/${encodeURIComponent(item.id)}`,
-  }));
+		route: `${kindFilter === "code_review" ? "/reviews" : kindFilter === "ci_diagnosis" ? "/diagnostics" : "/tasks"}/${encodeURIComponent(item.id)}`,
+	}));
+	const moduleLabel = kindFilter === "code_review" ? "M5 code review" : kindFilter === "ci_diagnosis" ? "M6 CI diagnosis" : "M4 task core";
+	const pageTitle = kindFilter === "code_review" ? "Code reviews" : kindFilter === "ci_diagnosis" ? "CI diagnostics" : "All tasks";
+	const pageDescription = kindFilter === "code_review" ? "GitHub pull request reviews, findings, evidence, and immutable commit runs." : kindFilter === "ci_diagnosis" ? "Failed GitHub Actions runs, redacted logs, root-cause hypotheses, and reproduction evidence." : "Durable reviews, diagnostics, repairs, retries, and audit-linked runs.";
 
   return (
     <>
-      <PageHeader eyebrow="Engineering · M4 task core" title="All tasks" description="Durable reviews, diagnostics, repairs, retries, and audit-linked runs." actions={<button className="secondary-button" onClick={() => void load()}>Refresh</button>} />
+	<PageHeader eyebrow={`Engineering · ${moduleLabel}`} title={pageTitle} description={pageDescription} actions={<button className="secondary-button" onClick={() => void load()}>Refresh</button>} />
       {message ? <div className="identity-message" role="status">{message}</div> : null}
       <div className="filter-bar" aria-label="Task filters">
         {["All", "Needs attention", "Running"].map((item) => <button key={item} className={filter === item ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(item)}>{item}</button>)}
@@ -214,9 +218,11 @@ type TaskDetailResponse = {
   task: APITask & { payload?: Record<string, unknown>; sourceKey?: string; lastError?: string };
   runs: Array<{ id: string; attempt: number; status: string; correlationId: string; createdAt: string; finishedAt?: string }>;
   audit: Array<{ action: string; outcome: string; createdAt: string }>;
+  findings?: Array<{ id: string; severity: string; category: string; path: string; lineStart?: number; explanation: string; remediation?: string }>;
+  evidence?: Array<{ id: string; kind: string; title: string; content: unknown }>;
 };
 
-function TaskDetailPage({ id, navigate }: { id: string; navigate: (route: string) => void }) {
+function TaskDetailPage({ id, navigate, backRoute = "/tasks" }: { id: string; navigate: (route: string) => void; backRoute?: string }) {
   const [detail, setDetail] = useState<TaskDetailResponse | null>(null);
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState(false);
@@ -260,18 +266,20 @@ function TaskDetailPage({ id, navigate }: { id: string; navigate: (route: string
     }
   };
 
-  if (message && !detail) return <><PageHeader eyebrow="M4 task" title="Task unavailable" description={message} actions={<button className="secondary-button" onClick={() => navigate("/tasks")}>Back to tasks</button>} /></>;
+  if (message && !detail) return <><PageHeader eyebrow="Task" title="Task unavailable" description={message} actions={<button className="secondary-button" onClick={() => navigate(backRoute)}>Back</button>} /></>;
   if (!detail) return <PageHeader eyebrow="M4 task" title="Loading task…" description="Reading the durable task, runs, and audit history." />;
   const task = detail.task;
   return (
     <>
-      <PageHeader eyebrow={`${taskKindLabel(task.kind)} · ${task.repositoryName || "repository not set"}`} title={task.title} description={`Task ${task.id} · source ${task.sourceKey || "not provided"}`} actions={<><button className="secondary-button" onClick={() => navigate("/tasks")}>Back</button>{task.status === "failed" || task.status === "cancelled" ? <button className="secondary-button" disabled={pending} onClick={() => void mutate("retry")}>Retry</button> : null}{["queued", "running", "awaiting_approval"].includes(task.status) ? <button className="danger-button" disabled={pending} onClick={() => void mutate("cancel")}>Cancel</button> : null}</>} />
+      <PageHeader eyebrow={`${taskKindLabel(task.kind)} · ${task.repositoryName || "repository not set"}`} title={task.title} description={`Task ${task.id} · source ${task.sourceKey || "not provided"}`} actions={<><button className="secondary-button" onClick={() => navigate(backRoute)}>Back</button>{task.status === "failed" || task.status === "cancelled" ? <button className="secondary-button" disabled={pending} onClick={() => void mutate("retry")}>Retry</button> : null}{["queued", "running", "awaiting_approval"].includes(task.status) ? <button className="danger-button" disabled={pending} onClick={() => void mutate("cancel")}>Cancel</button> : null}</>} />
       {message ? <div className="identity-message" role="status">{message}</div> : null}
       <div className="detail-status"><Status tone={taskTone(task.status)}>{taskStatusLabel(task.status)}</Status><span>{task.attempts}/{task.maxAttempts} attempts</span><span>Updated {new Date(task.updatedAt).toLocaleString()}</span></div>
       <div className="dashboard-grid">
         <section className="panel"><div className="panel-heading"><div><span className="eyebrow">Runs</span><h2>{detail.runs.length} durable runs</h2></div></div>{detail.runs.length ? detail.runs.map((run) => <div className="test-row" key={run.id}><i /><span><strong>{run.id.slice(0, 12)}</strong><small>Attempt {run.attempt} · {new Date(run.createdAt).toLocaleString()}</small></span><Status tone={taskTone(run.status)}>{taskStatusLabel(run.status)}</Status></div>) : <div className="empty-state"><strong>No run claimed yet</strong><span>The task remains in the persistent queue.</span></div>}</section>
         <aside className="panel"><div className="panel-heading"><div><span className="eyebrow">Audit history</span><h2>{detail.audit.length} events</h2></div></div>{detail.audit.length ? detail.audit.map((event, index) => <div className="test-row" key={`${event.action}-${index}`}><i /><span><strong>{event.action}</strong><small>{new Date(event.createdAt).toLocaleString()}</small></span><Status tone={event.outcome === "accepted" ? "success" : "neutral"}>{event.outcome}</Status></div>) : <div className="empty-state"><strong>No audit events</strong></div>}</aside>
       </div>
+	      {task.kind === "code_review" ? <section className="panel section-gap"><div className="panel-heading"><div><span className="eyebrow">M5 review output</span><h2>{detail.findings?.length ?? 0} findings</h2></div><span className="eyebrow">Immutable commit: {String(task.payload?.headSHA || "not available").slice(0, 12)}</span></div>{detail.findings?.length ? detail.findings.map((finding) => <div className="test-row" key={finding.id}><i /><span><strong>{finding.severity} · {finding.path}{finding.lineStart ? `:${finding.lineStart}` : ""}</strong><small>{finding.explanation}</small></span><Status tone={finding.severity === "critical" || finding.severity === "high" ? "critical" : "warning"}>{finding.category}</Status></div>) : <div className="empty-state"><strong>No findings persisted</strong><span>AC has not completed a structured review for this task yet.</span></div>}</section> : null}
+	      {task.kind === "ci_diagnosis" ? <section className="panel section-gap"><div className="panel-heading"><div><span className="eyebrow">M6 diagnosis output</span><h2>{detail.findings?.length ?? 0} root-cause hypotheses</h2></div><span className="eyebrow">Immutable commit: {String(task.payload?.headSHA || "not available").slice(0, 12)}</span></div>{detail.findings?.length ? detail.findings.map((finding) => <div className="test-row" key={finding.id}><i /><span><strong>{finding.explanation}</strong><small>{finding.remediation || "No recommended next action recorded."}</small></span><Status tone={finding.severity === "high" ? "critical" : "warning"}>{finding.category}</Status></div>) : <div className="empty-state"><strong>No diagnosis hypotheses persisted</strong><span>AC has not completed a structured CI diagnosis for this task yet.</span></div>}{detail.evidence?.length ? <div className="evidence-list">{detail.evidence.filter((item) => item.kind === "ci_log").slice(0, 20).map((item) => <pre className="log-viewer" key={item.id}>{JSON.stringify(item.content, null, 2)}</pre>)}</div> : null}</section> : null}
     </>
   );
 }
@@ -371,6 +379,9 @@ function ListPage({
   );
 }
 
+// Kept as a visual fallback for design review while the API-backed task detail
+// route is enabled by the M5 feature flag.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ReviewDetail({ openDialog }: { openDialog: (dialog: DialogState) => void }) {
   const [tab, setTab] = useState("Findings");
   return (
@@ -430,6 +441,7 @@ function DetailTabPlaceholder({ tab }: { tab: string }) {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function DiagnosisDetail({ openDialog }: { openDialog: (dialog: DialogState) => void }) {
   const stages = ["Received", "Log analysis", "Environment ready", "Reproduced", "Root cause", "Patch generated", "Tests passed", "Awaiting approval"];
   return (
@@ -1010,10 +1022,10 @@ export function RepoMenderApp() {
     if (pathname === "/") return <Dashboard navigate={navigate} />;
     if (pathname === "/tasks") return <TasksPage navigate={navigate} />;
     if (pathname.startsWith("/tasks/")) return <TaskDetailPage id={decodeURIComponent(pathname.slice("/tasks/".length))} navigate={navigate} />;
-    if (pathname === "/reviews") return <ListPage type="Code Review" title="Code reviews" description="Pull request risk, findings, evidence, and suggested repairs." navigate={navigate} />;
-    if (pathname.startsWith("/reviews/")) return <ReviewDetail openDialog={setDialog} />;
-    if (pathname === "/diagnostics") return <ListPage type="CI Diagnosis" title="CI diagnostics" description="Reproduced failures, root causes, patches, and verification evidence." navigate={navigate} />;
-    if (pathname.startsWith("/diagnostics/")) return <DiagnosisDetail openDialog={setDialog} />;
+    if (pathname === "/reviews") return <TasksPage navigate={navigate} kindFilter="code_review" />;
+    if (pathname.startsWith("/reviews/")) return <TaskDetailPage id={decodeURIComponent(pathname.slice("/reviews/".length))} navigate={navigate} backRoute="/reviews" />;
+	if (pathname === "/diagnostics") return <TasksPage navigate={navigate} kindFilter="ci_diagnosis" />;
+	if (pathname.startsWith("/diagnostics/")) return <TaskDetailPage id={decodeURIComponent(pathname.slice("/diagnostics/".length))} navigate={navigate} backRoute="/diagnostics" />;
     if (pathname === "/repairs") return <ListPage type="Issue Repair" title="Issue repairs" description="Governed issue-to-pull-request workflows with human approval." navigate={navigate} />;
     if (pathname.startsWith("/repairs/")) return <RepairDetail openDialog={setDialog} />;
     if (pathname === "/approvals") return <ApprovalsPage openDialog={setDialog} />;

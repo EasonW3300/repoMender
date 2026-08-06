@@ -1,6 +1,8 @@
 package scm
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -90,6 +92,81 @@ func TestGitHubAdapterInstallationRepositoriesAndWebhook(t *testing.T) {
 	headers.Set("X-Hub-Signature-256", "sha256=forged")
 	if _, err := adapter.VerifyWebhook(headers, body); err == nil {
 		t.Fatal("forged GitHub webhook accepted")
+	}
+}
+
+func TestGitHubAdapterNormalizesFailedWorkflowRunWebhook(t *testing.T) {
+	adapter, err := NewGitHubAdapter(GitHubConfig{WebhookSecret: "github-secret"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"action":"completed","installation":{"id":42},"repository":{"id":7,"full_name":"acme/payments","clone_url":"https://github.com/acme/payments.git"},"workflow_run":{"id":99,"name":"CI","html_url":"https://github.com/acme/payments/actions/runs/99","logs_url":"https://api.github.com/repos/acme/payments/actions/runs/99/logs","head_sha":"0123456789abcdef0123456789abcdef01234567","status":"completed","conclusion":"failure"}}`)
+	mac := hmac.New(sha256.New, []byte("github-secret"))
+	_, _ = mac.Write(body)
+	headers := http.Header{}
+	headers.Set("X-Hub-Signature-256", "sha256="+fmt.Sprintf("%x", mac.Sum(nil)))
+	headers.Set("X-GitHub-Delivery", "delivery-ci-1")
+	headers.Set("X-GitHub-Event", "workflow_run")
+	event, err := adapter.VerifyWebhook(headers, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.EventType != "workflow_run" || event.Normalized["workflowRunId"] != int64(99) || event.Normalized["conclusion"] != "failure" {
+		t.Fatalf("unexpected normalized event: %+v", event)
+	}
+}
+
+func TestGitHubAdapterDownloadsBoundedWorkflowLogArchive(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/acme/payments/actions/runs/99/logs" || r.Header.Get("Authorization") != "Bearer installation-token" {
+			t.Fatalf("unexpected log request: %s %s", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		var archive bytes.Buffer
+		writer := zip.NewWriter(&archive)
+		entry, err := writer.Create("job/1.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = entry.Write([]byte("TOKEN=secret\nfailed\n"))
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(archive.Bytes())
+	}))
+	defer server.Close()
+	adapter, err := NewGitHubAdapter(GitHubConfig{APIBaseURL: server.URL}, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs, err := adapter.DownloadWorkflowLogs(context.Background(), "installation-token", "acme/payments", 99)
+	if err != nil || !strings.Contains(logs, "failed") || !strings.Contains(logs, "job/1.txt") {
+		t.Fatalf("DownloadWorkflowLogs() = %q, %v", logs, err)
+	}
+}
+
+func TestGitHubAdapterControlsWorkflowLogProviderFailures(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+	}{
+		{name: "permission denied", status: http.StatusForbidden},
+		{name: "expired logs", status: http.StatusGone},
+		{name: "rate limited", status: http.StatusTooManyRequests},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+			}))
+			defer server.Close()
+			adapter, err := NewGitHubAdapter(GitHubConfig{APIBaseURL: server.URL}, server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := adapter.DownloadWorkflowLogs(context.Background(), "installation-token", "acme/payments", 99); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%d", test.status)) {
+				t.Fatalf("DownloadWorkflowLogs() error = %v, want provider status %d", err, test.status)
+			}
+		})
 	}
 }
 

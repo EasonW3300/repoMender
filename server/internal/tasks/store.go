@@ -28,7 +28,8 @@ func (s *PostgreSQLStore) CreateTask(ctx context.Context, input CreateInput) (Ta
 	if !ValidKind(input.Kind) {
 		return Task{}, ErrInvalidKind
 	}
-	if strings.TrimSpace(input.Title) == "" || strings.TrimSpace(input.SourceKey) == "" || input.CreatedBy == "" {
+	if strings.TrimSpace(input.Title) == "" || strings.TrimSpace(input.SourceKey) == "" ||
+		(input.CreatedBy == "" && !strings.HasPrefix(input.SourceKey, "github:")) {
 		return Task{}, errors.New("task title, source key, and creator are required")
 	}
 	if input.MaxAttempts <= 0 {
@@ -48,12 +49,12 @@ func (s *PostgreSQLStore) CreateTask(ctx context.Context, input CreateInput) (Ta
 	err = s.db.QueryRow(ctx, `
 		INSERT INTO tasks(id, kind, title, repository_id, repository_name, source_key, payload,
 		                 priority, max_attempts, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, $8, $9, $10, $11, $11)
+		VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, $8, $9, NULLIF($10, '')::uuid, $11, $11)
 		ON CONFLICT (source_key) DO UPDATE SET source_key = tasks.source_key
 		RETURNING id, kind, status, title, COALESCE(repository_id::text, ''), repository_name,
 		          source_key, payload, priority, attempts, max_attempts, available_at,
 		          lease_owner, lease_until, last_error, COALESCE(superseded_by::text, ''),
-		          created_by, created_at, updated_at, started_at, finished_at`,
+			  COALESCE(created_by::text, ''), created_at, updated_at, started_at, finished_at`,
 		id, input.Kind, strings.TrimSpace(input.Title), input.RepositoryID, input.RepositoryName,
 		input.SourceKey, input.Payload, input.Priority, input.MaxAttempts, input.CreatedBy, input.CreatedAt).
 		Scan(taskFields(&task)...)
@@ -469,10 +470,119 @@ func (s *PostgreSQLStore) RecordAudit(ctx context.Context, input AuditInput) (Au
 	return event, err
 }
 
+func (s *PostgreSQLStore) CreateFinding(ctx context.Context, input FindingInput) (Finding, error) {
+	if input.Evidence == nil {
+		input.Evidence = json.RawMessage(`{}`)
+	}
+	id, err := newID()
+	if err != nil {
+		return Finding{}, err
+	}
+	var finding Finding
+	err = s.db.QueryRow(ctx, `
+		INSERT INTO findings(id, task_id, run_id, severity, category, path, line_start, line_end,
+		                    explanation, evidence, confidence, remediation)
+		VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING id, task_id, COALESCE(run_id::text, ''), severity, category, path, line_start,
+		          line_end, explanation, evidence, confidence, remediation, created_at`,
+		id, input.TaskID, input.RunID, input.Severity, input.Category, input.Path, input.LineStart,
+		input.LineEnd, input.Explanation, input.Evidence, input.Confidence, input.Remediation).
+		Scan(&finding.ID, &finding.TaskID, &finding.RunID, &finding.Severity, &finding.Category,
+			&finding.Path, &finding.LineStart, &finding.LineEnd, &finding.Explanation,
+			&finding.Evidence, &finding.Confidence, &finding.Remediation, &finding.CreatedAt)
+	return finding, err
+}
+
+func (s *PostgreSQLStore) ListFindings(ctx context.Context, taskID string) ([]Finding, error) {
+	rows, err := s.db.Query(ctx, `SELECT id, task_id, COALESCE(run_id::text, ''), severity, category,
+		path, line_start, line_end, explanation, evidence, confidence, remediation, created_at
+		FROM findings WHERE task_id = $1 ORDER BY created_at, id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	findings := make([]Finding, 0)
+	for rows.Next() {
+		var finding Finding
+		if err := rows.Scan(&finding.ID, &finding.TaskID, &finding.RunID, &finding.Severity,
+			&finding.Category, &finding.Path, &finding.LineStart, &finding.LineEnd,
+			&finding.Explanation, &finding.Evidence, &finding.Confidence, &finding.Remediation,
+			&finding.CreatedAt); err != nil {
+			return nil, err
+		}
+		findings = append(findings, finding)
+	}
+	return findings, rows.Err()
+}
+
+func (s *PostgreSQLStore) CreateEvidence(ctx context.Context, input EvidenceInput) (Evidence, error) {
+	if input.Content == nil {
+		input.Content = json.RawMessage(`{}`)
+	}
+	id, err := newID()
+	if err != nil {
+		return Evidence{}, err
+	}
+	var evidence Evidence
+	err = s.db.QueryRow(ctx, `
+		INSERT INTO evidence(id, task_id, run_id, kind, title, content, digest)
+		VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7)
+		RETURNING id, task_id, COALESCE(run_id::text, ''), kind, title, content, digest, created_at`,
+		id, input.TaskID, input.RunID, input.Kind, input.Title, input.Content, input.Digest).
+		Scan(&evidence.ID, &evidence.TaskID, &evidence.RunID, &evidence.Kind, &evidence.Title,
+			&evidence.Content, &evidence.Digest, &evidence.CreatedAt)
+	return evidence, err
+}
+
+func (s *PostgreSQLStore) ListEvidence(ctx context.Context, taskID string) ([]Evidence, error) {
+	rows, err := s.db.Query(ctx, `SELECT id, task_id, COALESCE(run_id::text, ''), kind, title,
+		content, digest, created_at FROM evidence WHERE task_id = $1 ORDER BY created_at, id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	evidenceItems := make([]Evidence, 0)
+	for rows.Next() {
+		var evidence Evidence
+		if err := rows.Scan(&evidence.ID, &evidence.TaskID, &evidence.RunID, &evidence.Kind,
+			&evidence.Title, &evidence.Content, &evidence.Digest, &evidence.CreatedAt); err != nil {
+			return nil, err
+		}
+		evidenceItems = append(evidenceItems, evidence)
+	}
+	return evidenceItems, rows.Err()
+}
+
+func (s *PostgreSQLStore) SupersedeCodeReviews(ctx context.Context, repositoryID, providerRepositoryID string, pullRequest int, newTaskID string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE tasks SET status = 'superseded', superseded_by = $4, lease_owner = '', lease_until = NULL,
+			finished_at = COALESCE(finished_at, now()), updated_at = now()
+		WHERE kind = 'code_review' AND id <> $4
+		  AND (repository_id = NULLIF($1, '')::uuid OR (repository_id IS NULL AND payload->>'repositoryId' = NULLIF($2, '')))
+		  AND (payload->>'pullRequestNumber')::int = $3
+		  AND status <> 'superseded'`, repositoryID, providerRepositoryID, pullRequest, newTaskID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE runs SET status = 'superseded', error_code = 'superseded',
+			error_message = 'superseded by a newer pull request commit', finished_at = now()
+		WHERE task_id IN (
+			SELECT id FROM tasks WHERE kind = 'code_review' AND superseded_by = $1
+		) AND status IN ('queued', 'running', 'awaiting_approval')`, newTaskID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 const taskSelect = `SELECT id, kind, status, title, COALESCE(repository_id::text, ''), repository_name,
                            source_key, payload, priority, attempts, max_attempts, available_at,
                            lease_owner, lease_until, last_error, COALESCE(superseded_by::text, ''),
-                           created_by, created_at, updated_at, started_at, finished_at
+			COALESCE(created_by::text, ''), created_at, updated_at, started_at, finished_at
                     FROM tasks`
 
 const runSelect = `SELECT id, task_id, attempt, status, correlation_id, external_run_id, error_code,
