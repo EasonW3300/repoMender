@@ -46,7 +46,7 @@ remain disabled until their own acceptance gates pass.
 | M3 · Agent Compose execution adapter | Gate passed (`m3-ac-execution-adapter-mvp`) |
 | M4 · Task and audit core | Gate passed (`m4-task-audit-core-mvp`) |
 | M5 · Code review | MVP implementation and real private GitHub/AC smoke passed; merged with the M6 delivery PR |
-| M6 · CI diagnosis | Implementation, local/real acceptance, native failure run, PR, and merge passed; release tag pending |
+| M6 · CI diagnosis | Gate passed (`m6-ci-diagnosis-mvp`); local/real acceptance, native failure run, PR, merge, and cleanup passed |
 | M7 · Approval and governance | Not started |
 | M8 · Issue repair | Not started |
 | M9 · Automation and administration | Not started |
