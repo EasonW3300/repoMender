@@ -1,4 +1,4 @@
-.PHONY: dev up down m0-verify m1-verify m2-verify m6-verify backend-test backend-integration
+.PHONY: dev up down m0-verify m1-verify m2-verify m6-verify m7-verify backend-test backend-integration
 
 dev:
 	npm run dev
@@ -45,3 +45,11 @@ m6-verify:
 	$(MAKE) backend-test
 	docker compose config --quiet
 	docker compose -f compose.yaml -f compose.scm-smoke.yaml -f compose.m6-smoke.yaml config --quiet
+
+m7-verify:
+	npm run lint
+	npm run typecheck
+	npm test
+	$(MAKE) backend-test
+	docker compose config --quiet
+	docker compose -f compose.yaml -f compose.scm-smoke.yaml -f compose.m6-smoke.yaml -f compose.m7-smoke.yaml config --quiet

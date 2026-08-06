@@ -125,6 +125,20 @@ type APITask = {
   lastError?: string;
 };
 
+type APIApproval = {
+  id: string;
+  action: "repair_plan" | "publish_patch" | "sandbox_network";
+  state: "pending" | "approved" | "rejected" | "expired" | "cancelled" | "consumed";
+  risk: "low" | "medium" | "high" | "critical";
+  actionDigest: string;
+  requesterId: string;
+  eligibleRoles: string[];
+  requestedAt: string;
+  expiresAt: string;
+  decisionReason?: string;
+  metadata?: Record<string, unknown>;
+};
+
 function taskKindLabel(kind: APITask["kind"]): TaskRecord["type"] {
   if (kind === "code_review") return "Code Review";
   if (kind === "ci_diagnosis") return "CI Diagnosis";
@@ -523,24 +537,99 @@ function RepairDetail({ openDialog }: { openDialog: (dialog: DialogState) => voi
   );
 }
 
-function ApprovalsPage({ openDialog }: { openDialog: (dialog: DialogState) => void }) {
+function approvalLabel(action: APIApproval["action"]): string {
+  if (action === "repair_plan") return "Repair plan";
+  if (action === "publish_patch") return "Publish patch";
+  return "Sandbox network";
+}
+
+function approvalTone(risk: APIApproval["risk"]): Tone {
+  if (risk === "critical") return "critical";
+  if (risk === "high") return "high";
+  if (risk === "medium") return "warning";
+  return "info";
+}
+
+function ApprovalsPage() {
+  const [items, setItems] = useState<APIApproval[]>([]);
   const [filter, setFilter] = useState("All");
-  const visible = filter === "High risk" ? approvals.filter((item) => item.tone === "critical") : approvals;
+  const [selected, setSelected] = useState<APIApproval | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/v1/approvals?limit=100");
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        window.location.assign("/login");
+        return;
+      }
+      if (!response.ok) {
+        setMessage(response.status === 404 ? "M7 approval governance is disabled on this deployment." : `Approval API unavailable: ${body.error || "request_failed"}`);
+        return;
+      }
+      setItems((body.approvals ?? []) as APIApproval[]);
+    } catch {
+      setMessage("RepoMender API is unavailable. Approval state was not replaced with browser mocks.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  const visible = items.filter((item) => {
+    if (filter === "High risk") return item.risk === "high" || item.risk === "critical";
+    if (filter === "Plans") return item.action === "repair_plan";
+    if (filter === "Patches") return item.action === "publish_patch";
+    if (filter === "Permissions") return item.action === "sandbox_network";
+    return true;
+  });
+
+  const decide = async (item: APIApproval, decision: "approved" | "rejected") => {
+    setMessage("");
+    try {
+      const response = await fetch(`/api/v1/approvals/${encodeURIComponent(item.id)}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+        body: JSON.stringify({ decision, reason: `operator selected ${decision} in approval inbox`, idempotencyKey: window.crypto.randomUUID() }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setMessage(`Decision rejected: ${body.error || "approval_decision_failed"}`);
+        return;
+      }
+      const updated = body.approval as APIApproval;
+      setItems((current) => current.map((currentItem) => currentItem.id === updated.id ? updated : currentItem));
+      setSelected(updated);
+    } catch {
+      setMessage("RepoMender API is unavailable. The approval was not changed.");
+    }
+  };
+
   return (
     <>
-      <PageHeader eyebrow="Engineering · Human control" title="Approval center" description="Review high-impact agent actions with evidence, scope, and cost before execution." actions={<button className="secondary-button">Approval policy</button>} />
+      <PageHeader eyebrow="Engineering · Human control" title="Approval center" description="Review high-impact agent actions with evidence, scope, and cost before execution." actions={<button className="secondary-button" onClick={() => void load()}>Refresh</button>} />
       <div className="filter-bar">{["All", "High risk", "Plans", "Patches", "Permissions"].map((item) => <button key={item} className={filter === item ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(item)}>{item}</button>)}</div>
+      {message ? <div className="identity-message" role="status">{message}</div> : null}
       <section className="approval-grid">
-        {visible.map((approval) => (
-          <article className="approval-card" key={approval.title}>
-            <Status tone={approval.tone}>{approval.risk}</Status>
-            <span className="eyebrow">{approval.context}</span>
-            <h2>{approval.title}</h2>
-            <p>{approval.summary}</p>
-            <div className="approval-card-footer"><small>{approval.meta}</small><button className="primary-button" onClick={() => openDialog({ title: approval.title, body: `${approval.summary} This decision will be written to the audit log.`, action: approval.title.includes("network") ? "Allow for 15 minutes" : "Approve" })}>Review</button></div>
+        {!loading && visible.length ? visible.map((approval) => (
+          <article className="approval-card" key={approval.id} onClick={() => setSelected(approval)}>
+            <Status tone={approvalTone(approval.risk)}>{approval.risk}</Status>
+            <span className="eyebrow">{approvalLabel(approval.action)}</span>
+            <h2>{approval.id.slice(0, 12)}</h2>
+            <p>Exact action digest <code>{approval.actionDigest.slice(0, 16)}…</code></p>
+            <div className="approval-card-footer"><small>Expires {new Date(approval.expiresAt).toLocaleString()}</small><button className="primary-button" onClick={(event) => { event.stopPropagation(); setSelected(approval); }}>Review</button></div>
           </article>
-        ))}
+        )) : <div className="empty-state"><strong>{loading ? "Loading approval inbox…" : "No approval requests"}</strong><span>{message || "Protected plans, patches, and sandbox permissions will appear here."}</span></div>}
       </section>
+      {selected ? <section className="panel section-gap" aria-label="Approval detail"><div className="panel-heading"><div><span className="eyebrow">Approval detail</span><h2>{approvalLabel(selected.action)} · {selected.id.slice(0, 12)}</h2></div><Status tone={selected.state === "approved" ? "success" : selected.state === "pending" ? "warning" : "neutral"}>{selected.state}</Status></div><dl><div><dt>Action digest</dt><dd><code>{selected.actionDigest}</code></dd></div><div><dt>Eligible approvers</dt><dd>{selected.eligibleRoles.join(", ")}</dd></div><div><dt>Requested</dt><dd>{new Date(selected.requestedAt).toLocaleString()}</dd></div></dl>{selected.state === "pending" ? <div className="panel-footer"><button className="secondary-button" onClick={() => void decide(selected, "rejected")}>Reject</button><button className="primary-button" onClick={() => void decide(selected, "approved")}>Approve</button></div> : null}</section> : null}
     </>
   );
 }
@@ -1028,7 +1117,7 @@ export function RepoMenderApp() {
 	if (pathname.startsWith("/diagnostics/")) return <TaskDetailPage id={decodeURIComponent(pathname.slice("/diagnostics/".length))} navigate={navigate} backRoute="/diagnostics" />;
     if (pathname === "/repairs") return <ListPage type="Issue Repair" title="Issue repairs" description="Governed issue-to-pull-request workflows with human approval." navigate={navigate} />;
     if (pathname.startsWith("/repairs/")) return <RepairDetail openDialog={setDialog} />;
-    if (pathname === "/approvals") return <ApprovalsPage openDialog={setDialog} />;
+    if (pathname === "/approvals") return <ApprovalsPage />;
     if (pathname === "/repositories") return <RepositoriesPage navigate={navigate} />;
     if (pathname.startsWith("/repositories/")) return <RepositoryDetail id={decodeURIComponent(pathname.slice("/repositories/".length))} navigate={navigate} />;
     if (pathname === "/automations") return <AutomationsPage showToast={showToast} />;

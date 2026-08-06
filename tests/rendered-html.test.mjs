@@ -71,6 +71,8 @@ test("source keeps navigation, approval, and accessibility behaviors wired", asy
   assert.match(app, /Continue with enterprise SSO/);
   assert.match(app, /\/api\/v1\/scm\/connections/);
   assert.match(app, /\/api\/v1\/repositories/);
+  assert.match(app, /\/api\/v1\/approvals/);
+  assert.match(app, /Approval state was not replaced with browser mocks/);
   assert.match(app, /Install GitHub App/);
   assert.match(app, /Connect GitLab/);
   assert.match(app, /providers\.gitlab \?/);

@@ -1,0 +1,10 @@
+# Local-only M7 overlay. It enables approval governance on the accepted M3-M6
+# dependency chain while keeping the feature opt-in for ordinary deployments.
+services:
+  api:
+    environment:
+      REPOMENDER_FEATURE_M7_APPROVALS: "true"
+
+  worker:
+    environment:
+      REPOMENDER_FEATURE_M7_APPROVALS: "true"
