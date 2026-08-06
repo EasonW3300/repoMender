@@ -208,6 +208,19 @@ func TestLoadM7RequiresM4AndM6(t *testing.T) {
 	}
 }
 
+func TestLoadM8RequiresScmExecutionTasksAndApprovals(t *testing.T) {
+	env := map[string]string{
+		"REPOMENDER_DATABASE_URL":            "postgres://db",
+		"REPOMENDER_FEATURE_M8_ISSUE_REPAIR": "true",
+	}
+	if _, err := load(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	}); err == nil {
+		t.Fatal("expected M8 to require the accepted dependency chain")
+	}
+}
+
 func TestLoadAcceptsAgentComposeConfiguration(t *testing.T) {
 	values := map[string]string{
 		"REPOMENDER_DATABASE_URL":            "postgres://example",

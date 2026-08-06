@@ -187,6 +187,22 @@ func (s *Service) ListUsers(ctx context.Context, actor User) ([]User, error) {
 	return s.store.ListUsers(ctx)
 }
 
+// SystemActor selects a durable maintainer for verified provider webhooks that
+// do not carry a RepoMender user session. It never creates a user; bootstrap or
+// OIDC provisioning must have established the governed actor first.
+func (s *Service) SystemActor(ctx context.Context) (User, error) {
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return User{}, err
+	}
+	for _, user := range users {
+		if user.Active && (user.Role == RoleAdmin || user.Role == RoleMaintainer) {
+			return user, nil
+		}
+	}
+	return User{}, ErrForbidden
+}
+
 func (s *Service) createSession(ctx context.Context, user User) (User, string, string, error) {
 	sessionToken, err := randomToken(32)
 	if err != nil {

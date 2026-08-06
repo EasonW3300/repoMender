@@ -306,6 +306,49 @@ func (s *Service) PublishGitHubDiagnosis(ctx context.Context, repository, instal
 	return github.CreateDiagnosisCheckRun(ctx, token, repository, sha, summary)
 }
 
+// ResolveGitHubIssue and ResolveGitHubBaseSHA keep short-lived installation
+// credentials inside the SCM service while M8 receives only provider-neutral
+// issue and immutable-commit data.
+func (s *Service) ResolveGitHubIssue(ctx context.Context, repository, installationID string, number int) (Issue, error) {
+	github, token, err := s.githubToken(ctx, installationID)
+	if err != nil {
+		return Issue{}, err
+	}
+	return github.GetIssue(ctx, token, repository, number)
+}
+
+func (s *Service) ResolveGitHubBaseSHA(ctx context.Context, repository, installationID, branch string) (string, error) {
+	github, token, err := s.githubToken(ctx, installationID)
+	if err != nil {
+		return "", err
+	}
+	return github.ResolveDefaultBranchSHA(ctx, token, repository, branch)
+}
+
+func (s *Service) PublishGitHubDraft(ctx context.Context, input DraftPublication) (DraftPullRequest, error) {
+	github, token, err := s.githubToken(ctx, input.InstallationID)
+	if err != nil {
+		return DraftPullRequest{}, err
+	}
+	return github.PublishDraft(ctx, token, input)
+}
+
+func (s *Service) githubToken(ctx context.Context, installationID string) (*GitHubAdapter, string, error) {
+	adapter, ok := s.adapters[ProviderGitHub]
+	if !ok || !adapter.Available() {
+		return nil, "", ErrProviderUnavailable
+	}
+	github, ok := adapter.(*GitHubAdapter)
+	if !ok {
+		return nil, "", ErrProviderUnavailable
+	}
+	token, err := github.InstallationToken(ctx, installationID)
+	if err != nil {
+		return nil, "", err
+	}
+	return github, token, nil
+}
+
 func validGitHubRepository(value string) bool {
 	parts := strings.Split(strings.TrimSpace(value), "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {

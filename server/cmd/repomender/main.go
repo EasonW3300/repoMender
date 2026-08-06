@@ -10,11 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/EasonW3300/repoMender/server/internal/approvals"
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
 	"github.com/EasonW3300/repoMender/server/internal/diagnosis"
 	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
 	"github.com/EasonW3300/repoMender/server/internal/httpserver"
+	"github.com/EasonW3300/repoMender/server/internal/repair"
 	"github.com/EasonW3300/repoMender/server/internal/review"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
 	"github.com/EasonW3300/repoMender/server/internal/tasks"
@@ -67,7 +69,7 @@ func run(args []string) error {
 				lease = 5 * time.Second
 			}
 			processor := worker.NewMultiplexProcessor(worker.NewCoreProcessor(service))
-			if cfg.FeatureM5CodeReview || cfg.FeatureM6CIDiagnosis {
+			if cfg.FeatureM5CodeReview || cfg.FeatureM6CIDiagnosis || cfg.FeatureM8IssueRepair {
 				if !cfg.FeatureM3ACExecution {
 					return errors.New("M5/M6 execution requires M3 AC execution")
 				}
@@ -91,6 +93,13 @@ func run(args []string) error {
 				if cfg.FeatureM6CIDiagnosis {
 					processor.Register(tasks.KindCIDiagnosis,
 						diagnosis.NewProcessor(service, acClient, githubService, 15*time.Minute, cfg.ACSensitivePatterns).
+							WithProjectID(cfg.ACProjectID).WithAgentName(cfg.ACAgentName))
+				}
+				if cfg.FeatureM8IssueRepair {
+					approvalService := approvals.NewService(approvals.NewPostgreSQLStore(db), service)
+					repairService := repair.NewService(repair.NewPostgreSQLStore(db), service, approvalService, repair.NewSCMProvider(githubService))
+					processor.Register(tasks.KindIssueRepair,
+						repair.NewProcessor(repairService, service, acClient, 15*time.Minute).
 							WithProjectID(cfg.ACProjectID).WithAgentName(cfg.ACAgentName))
 				}
 			}

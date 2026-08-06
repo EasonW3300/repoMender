@@ -67,6 +67,39 @@ type RemoteRepository struct {
 	Metadata             map[string]any
 }
 
+// Issue and DraftPublication are provider-neutral shapes consumed by the M8
+// repair workflow. The SCM package owns GitHub-specific authentication and
+// branch/PR writes while repair logic remains provider-agnostic.
+type Issue struct {
+	Number        int
+	Title         string
+	Body          string
+	WebURL        string
+	State         string
+	IsPullRequest bool
+}
+
+type DraftFile struct {
+	Path    string
+	Content string
+}
+
+type DraftPublication struct {
+	Repository     string
+	InstallationID string
+	BaseBranch     string
+	BaseSHA        string
+	BranchName     string
+	Title          string
+	Body           string
+	Files          []DraftFile
+}
+
+type DraftPullRequest struct {
+	Number int
+	URL    string
+}
+
 type Credential struct {
 	AccessToken  string    `json:"accessToken,omitempty"`
 	RefreshToken string    `json:"refreshToken,omitempty"`

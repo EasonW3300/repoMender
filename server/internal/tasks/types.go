@@ -238,9 +238,12 @@ func CanTransition(from, to Status) bool {
 		return from == StatusRunning || from == StatusAwaitingApproval
 	}
 	allowed := map[Status][]Status{
-		StatusQueued:           {StatusRunning, StatusCancelled, StatusSuperseded},
-		StatusRunning:          {StatusAwaitingApproval, StatusSucceeded, StatusFailed, StatusCancelled, StatusSuperseded},
-		StatusAwaitingApproval: {StatusSucceeded, StatusFailed, StatusCancelled, StatusSuperseded},
+		StatusQueued:  {StatusRunning, StatusCancelled, StatusSuperseded},
+		StatusRunning: {StatusAwaitingApproval, StatusSucceeded, StatusFailed, StatusCancelled, StatusSuperseded},
+		// Approval-gated business modules resume the same durable task after a
+		// protected action is consumed; the retry boundary keeps this transition
+		// idempotent and lets the existing queue create a fresh run.
+		StatusAwaitingApproval: {StatusQueued, StatusSucceeded, StatusFailed, StatusCancelled, StatusSuperseded},
 		StatusFailed:           {StatusQueued, StatusCancelled, StatusSuperseded},
 		StatusCancelled:        {StatusQueued, StatusSuperseded},
 		StatusSucceeded:        {StatusSuperseded},

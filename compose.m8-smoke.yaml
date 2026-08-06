@@ -1,0 +1,9 @@
+services:
+  api:
+    environment:
+      REPOMENDER_FEATURE_M8_ISSUE_REPAIR: "true"
+      REPOMENDER_AC_PROJECT_ID: ${REPOMENDER_AC_PROJECT_ID:-repomender-m8-smoke}
+  worker:
+    environment:
+      REPOMENDER_FEATURE_M8_ISSUE_REPAIR: "true"
+      REPOMENDER_AC_PROJECT_ID: ${REPOMENDER_AC_PROJECT_ID:-repomender-m8-smoke}
