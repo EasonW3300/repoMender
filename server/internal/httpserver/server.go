@@ -16,6 +16,7 @@ import (
 	"github.com/EasonW3300/repoMender/server/internal/diagnosis"
 	"github.com/EasonW3300/repoMender/server/internal/execution"
 	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
+	"github.com/EasonW3300/repoMender/server/internal/repair"
 	"github.com/EasonW3300/repoMender/server/internal/review"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
 	"github.com/EasonW3300/repoMender/server/internal/tasks"
@@ -44,6 +45,7 @@ type Server struct {
 	review       *review.Service
 	diagnosis    *diagnosis.Service
 	approvals    *approvals.Service
+	repair       *repair.Service
 	cookieSecure bool
 }
 
@@ -150,6 +152,26 @@ func NewWithApprovalServices(
 	return server
 }
 
+// NewWithRepairServices adds M8 while preserving all earlier constructor
+// signatures used by M0-M7 tests and deployments.
+func NewWithRepairServices(
+	checker HealthChecker,
+	service *auth.Service,
+	provider auth.OIDCProvider,
+	scmService *scm.Service,
+	taskService *tasks.Service,
+	reviewService *review.Service,
+	diagnosisService *diagnosis.Service,
+	approvalService *approvals.Service,
+	repairService *repair.Service,
+	cookieSecure bool,
+	readiness ...ReadinessDependency,
+) *Server {
+	server := NewWithApprovalServices(checker, service, provider, scmService, taskService, reviewService, diagnosisService, approvalService, cookieSecure, readiness...)
+	server.repair = repairService
+	return server
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", s.live)
@@ -199,6 +221,14 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/v1/approvals/{id}/decision", s.decideApproval)
 		mux.HandleFunc("POST /api/v1/approvals/{id}/consume", s.consumeApproval)
 		mux.HandleFunc("POST /api/v1/approvals/{id}/cancel", s.cancelApproval)
+	}
+	if s.auth != nil && s.repair != nil {
+		mux.HandleFunc("GET /api/v1/issue-repairs", s.listRepairs)
+		mux.HandleFunc("POST /api/v1/issue-repairs", s.createRepair)
+		mux.HandleFunc("POST /api/v1/issue-repairs/from-diagnosis", s.createRepairFromDiagnosis)
+		mux.HandleFunc("GET /api/v1/issue-repairs/{id}", s.getRepair)
+		mux.HandleFunc("POST /api/v1/issue-repairs/{id}/plan/consume", s.consumeRepairPlan)
+		mux.HandleFunc("POST /api/v1/issue-repairs/{id}/patch/consume", s.consumeRepairPatch)
 	}
 	return securityHeaders(mux)
 }
@@ -273,9 +303,13 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 	if cfg.FeatureM7Approvals && cfg.FeatureM4Tasks && taskService != nil {
 		approvalService = approvals.NewService(approvals.NewPostgreSQLStore(db), taskService)
 	}
+	var repairService *repair.Service
+	if cfg.FeatureM8IssueRepair && cfg.FeatureM7Approvals && cfg.FeatureM4Tasks && taskService != nil && approvalService != nil && scmService != nil {
+		repairService = repair.NewService(repair.NewPostgreSQLStore(db), taskService, approvalService, repair.NewSCMProvider(scmService))
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           NewWithApprovalServices(db, service, provider, scmService, taskService, reviewService, diagnosisService, approvalService, cfg.CookieSecure, readiness...).Handler(),
+		Handler:           NewWithRepairServices(db, service, provider, scmService, taskService, reviewService, diagnosisService, approvalService, repairService, cfg.CookieSecure, readiness...).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

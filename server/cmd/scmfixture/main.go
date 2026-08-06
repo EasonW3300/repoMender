@@ -63,6 +63,30 @@ func main() {
 		w.Header().Set("Content-Type", "application/zip")
 		_, _ = w.Write(archive.Bytes())
 	})
+	mux.HandleFunc("GET /github/repos/smoke/github-repository/issues/731", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"number": 731, "title": "Retry webhook delivery", "body": "Repair the retry path", "html_url": "https://github.com/smoke/github-repository/issues/731", "state": "open"})
+	})
+	mux.HandleFunc("GET /github/repos/smoke/github-repository/git/ref/heads/main", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"object": map[string]string{"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}})
+	})
+	mux.HandleFunc("POST /github/repos/smoke/github-repository/git/refs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"ref": "refs/heads/repomender/repair/smoke", "object": map[string]string{"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}})
+	})
+	mux.HandleFunc("POST /github/repos/smoke/github-repository/git/blobs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]string{"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})
+	})
+	mux.HandleFunc("POST /github/repos/smoke/github-repository/git/trees", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]string{"sha": "cccccccccccccccccccccccccccccccccccccccc"})
+	})
+	mux.HandleFunc("POST /github/repos/smoke/github-repository/git/commits", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]string{"sha": "dddddddddddddddddddddddddddddddddddddddd"})
+	})
+	mux.HandleFunc("/github/repos/smoke/github-repository/git/refs/heads/", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"object": map[string]string{"sha": "dddddddddddddddddddddddddddddddddddddddd"}})
+	})
+	mux.HandleFunc("POST /github/repos/smoke/github-repository/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"number": 7310, "html_url": "https://github.com/smoke/github-repository/pull/7310", "draft": true})
+	})
 	mux.HandleFunc("POST /github/repos/smoke/github-repository/check-runs", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]any{"id": 9901, "name": "RepoMender CI Diagnosis", "status": "completed"})
 	})

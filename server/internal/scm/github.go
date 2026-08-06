@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // RSA signing creates short-lived GitHub App JWTs without persisting
@@ -277,6 +278,151 @@ func (a *GitHubAdapter) CreateIssueComment(ctx context.Context, token, repositor
 	return a.tokenJSON(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", repository, number), token, body, &response)
 }
 
+// GetIssue reads one issue using a short-lived installation token. Pull
+// requests are represented by the same GitHub endpoint, so the response keeps
+// an explicit marker for M8 eligibility checks.
+func (a *GitHubAdapter) GetIssue(ctx context.Context, token, repository string, number int) (Issue, error) {
+	if number <= 0 || !validGitHubRepository(repository) {
+		return Issue{}, errors.New("invalid GitHub issue request")
+	}
+	var response struct {
+		Number      int            `json:"number"`
+		Title       string         `json:"title"`
+		Body        string         `json:"body"`
+		HTMLURL     string         `json:"html_url"`
+		State       string         `json:"state"`
+		PullRequest map[string]any `json:"pull_request"`
+	}
+	if err := a.tokenJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/issues/%d", repository, number), token, nil, &response); err != nil {
+		return Issue{}, err
+	}
+	if response.Number != number || strings.TrimSpace(response.Title) == "" {
+		return Issue{}, errors.New("GitHub issue response is incomplete")
+	}
+	return Issue{Number: response.Number, Title: response.Title, Body: response.Body, WebURL: response.HTMLURL, State: response.State, IsPullRequest: len(response.PullRequest) != 0}, nil
+}
+
+// ResolveDefaultBranchSHA binds repair planning to the current repository
+// branch tip. The resulting SHA is stored before AC sees the issue so a later
+// mutable branch update cannot change the repair base.
+func (a *GitHubAdapter) ResolveDefaultBranchSHA(ctx context.Context, token, repository, branch string) (string, error) {
+	if !validGitHubRepository(repository) || strings.TrimSpace(branch) == "" || strings.ContainsAny(branch, "\r\n") {
+		return "", errors.New("invalid GitHub base branch request")
+	}
+	var response struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if err := a.tokenJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/git/ref/heads/%s", repository, branch), token, nil, &response); err != nil {
+		return "", err
+	}
+	if len(response.Object.SHA) != 40 || strings.Trim(response.Object.SHA, "0123456789abcdefABCDEF") != "" {
+		return "", errors.New("GitHub base commit response is invalid")
+	}
+	return response.Object.SHA, nil
+}
+
+// PublishDraft creates or resumes a deterministic non-protected branch, writes
+// validated text files through the Git data API, and opens a draft PR. Existing
+// PR lookup makes a retry after a provider timeout idempotent.
+func (a *GitHubAdapter) PublishDraft(ctx context.Context, token string, input DraftPublication) (DraftPullRequest, error) {
+	if !validGitHubRepository(input.Repository) || input.BaseBranch == "" || input.BaseSHA == "" || input.BranchName == "" || input.Title == "" || len(input.Files) == 0 {
+		return DraftPullRequest{}, errors.New("invalid GitHub draft publication")
+	}
+	if input.BranchName == input.BaseBranch || strings.HasPrefix(input.BranchName, "main") || strings.HasPrefix(input.BranchName, "master") {
+		return DraftPullRequest{}, errors.New("protected branch publication rejected")
+	}
+	if existing, ok := a.findDraftPullRequest(ctx, token, input.Repository, input.BranchName); ok {
+		return existing, nil
+	}
+	baseSHA := input.BaseSHA
+	var ref struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if err := a.tokenJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/git/ref/heads/%s", input.Repository, input.BranchName), token, nil, &ref); err == nil && ref.Object.SHA != "" {
+		baseSHA = ref.Object.SHA
+	} else {
+		var created map[string]any
+		body, _ := json.Marshal(map[string]string{"ref": "refs/heads/" + input.BranchName, "sha": input.BaseSHA})
+		if err := a.tokenJSON(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/git/refs", input.Repository), token, body, &created); err != nil {
+			if existing, ok := a.findDraftPullRequest(ctx, token, input.Repository, input.BranchName); ok {
+				return existing, nil
+			}
+			return DraftPullRequest{}, err
+		}
+	}
+	entries := make([]map[string]string, 0, len(input.Files))
+	for _, file := range input.Files {
+		if !validRepairPath(file.Path) || strings.ContainsRune(file.Content, 0) || !utf8.ValidString(file.Content) {
+			return DraftPullRequest{}, errors.New("invalid repair file")
+		}
+		body, _ := json.Marshal(map[string]string{"content": file.Content, "encoding": "utf-8"})
+		var blob struct {
+			SHA string `json:"sha"`
+		}
+		if err := a.tokenJSON(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/git/blobs", input.Repository), token, body, &blob); err != nil {
+			return DraftPullRequest{}, err
+		}
+		entries = append(entries, map[string]string{"path": file.Path, "mode": "100644", "type": "blob", "sha": blob.SHA})
+	}
+	treeBody, _ := json.Marshal(map[string]any{"base_tree": baseSHA, "tree": entries})
+	var tree struct {
+		SHA string `json:"sha"`
+	}
+	if err := a.tokenJSON(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/git/trees", input.Repository), token, treeBody, &tree); err != nil {
+		return DraftPullRequest{}, err
+	}
+	commitBody, _ := json.Marshal(map[string]any{"message": input.Title, "tree": tree.SHA, "parents": []string{baseSHA}})
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	if err := a.tokenJSON(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/git/commits", input.Repository), token, commitBody, &commit); err != nil {
+		return DraftPullRequest{}, err
+	}
+	refBody, _ := json.Marshal(map[string]any{"sha": commit.SHA, "force": false})
+	var updated map[string]any
+	if err := a.tokenJSON(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/git/refs/heads/%s", input.Repository, input.BranchName), token, refBody, &updated); err != nil {
+		return DraftPullRequest{}, err
+	}
+	prBody, _ := json.Marshal(map[string]any{"title": input.Title, "body": input.Body, "head": input.BranchName, "base": input.BaseBranch, "draft": true})
+	var pr struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := a.tokenJSON(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/pulls", input.Repository), token, prBody, &pr); err != nil {
+		if existing, ok := a.findDraftPullRequest(ctx, token, input.Repository, input.BranchName); ok {
+			return existing, nil
+		}
+		return DraftPullRequest{}, err
+	}
+	return DraftPullRequest{Number: pr.Number, URL: pr.HTMLURL}, nil
+}
+
+func (a *GitHubAdapter) findDraftPullRequest(ctx context.Context, token, repository, branch string) (DraftPullRequest, bool) {
+	var response []struct {
+		Number  int    `json:"number"`
+		HTMLURL string `json:"html_url"`
+		Draft   bool   `json:"draft"`
+	}
+	if err := a.tokenJSON(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/pulls?state=all&head=%s:%s", repository, strings.Split(repository, "/")[0], branch), token, nil, &response); err != nil {
+		return DraftPullRequest{}, false
+	}
+	for _, pr := range response {
+		if pr.Draft {
+			return DraftPullRequest{Number: pr.Number, URL: pr.HTMLURL}, true
+		}
+	}
+	return DraftPullRequest{}, false
+}
+
+func validRepairPath(value string) bool {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	return value != "" && !strings.HasPrefix(value, "/") && !strings.Contains(value, "../") && value != ".." && !strings.HasPrefix(value, ".git/")
+}
+
 func (a *GitHubAdapter) VerifyWebhook(headers http.Header, body []byte) (WebhookEvent, error) {
 	signature := headers.Get("X-Hub-Signature-256")
 	deliveryID := headers.Get("X-GitHub-Delivery")
@@ -298,11 +444,20 @@ func (a *GitHubAdapter) VerifyWebhook(headers http.Header, body []byte) (Webhook
 			ID int64 `json:"id"`
 		} `json:"installation"`
 		Repository struct {
-			ID       int64  `json:"id"`
-			FullName string `json:"full_name"`
-			CloneURL string `json:"clone_url"`
-			HTMLURL  string `json:"html_url"`
+			ID            int64  `json:"id"`
+			FullName      string `json:"full_name"`
+			CloneURL      string `json:"clone_url"`
+			HTMLURL       string `json:"html_url"`
+			DefaultBranch string `json:"default_branch"`
 		} `json:"repository"`
+		Issue struct {
+			Number      int            `json:"number"`
+			Title       string         `json:"title"`
+			Body        string         `json:"body"`
+			HTMLURL     string         `json:"html_url"`
+			State       string         `json:"state"`
+			PullRequest map[string]any `json:"pull_request"`
+		} `json:"issue"`
 		PullRequest struct {
 			Number  int    `json:"number"`
 			HTMLURL string `json:"html_url"`
@@ -346,6 +501,22 @@ func (a *GitHubAdapter) VerifyWebhook(headers http.Header, body []byte) (Webhook
 				"webURL": payload.WorkflowRun.HTMLURL, "workflowRunId": payload.WorkflowRun.ID,
 				"workflowName": payload.WorkflowRun.Name, "logsURL": payload.WorkflowRun.LogsURL,
 				"headSHA": payload.WorkflowRun.HeadSHA, "status": payload.WorkflowRun.Status,
+			},
+		}, nil
+	}
+	if eventType == "issues" {
+		if payload.Issue.Number <= 0 || strings.TrimSpace(payload.Issue.Title) == "" || payload.Repository.ID <= 0 || payload.Repository.FullName == "" || payload.Repository.DefaultBranch == "" {
+			return WebhookEvent{}, ErrInvalidWebhook
+		}
+		return WebhookEvent{
+			DeliveryID: deliveryID, EventType: eventType,
+			Normalized: map[string]any{
+				"action": payload.Action, "installationId": payload.Installation.ID,
+				"repositoryId": payload.Repository.ID, "repository": payload.Repository.FullName,
+				"cloneURL": payload.Repository.CloneURL, "webURL": payload.Issue.HTMLURL,
+				"defaultBranch": payload.Repository.DefaultBranch, "issueNumber": payload.Issue.Number,
+				"issueTitle": payload.Issue.Title, "issueBody": payload.Issue.Body,
+				"issueState": payload.Issue.State, "isPullRequest": len(payload.Issue.PullRequest) != 0,
 			},
 		}, nil
 	}

@@ -2,13 +2,16 @@ package httpserver
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/EasonW3300/repoMender/server/internal/auth"
 	"github.com/EasonW3300/repoMender/server/internal/diagnosis"
+	"github.com/EasonW3300/repoMender/server/internal/repair"
 	"github.com/EasonW3300/repoMender/server/internal/review"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
 	"github.com/EasonW3300/repoMender/server/internal/tasks"
@@ -157,7 +160,7 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, provider 
 		writeError(w, http.StatusRequestEntityTooLarge, "webhook_too_large")
 		return
 	}
-	if (s.review != nil || s.diagnosis != nil) && provider == scm.ProviderGitHub {
+	if (s.review != nil || s.diagnosis != nil || s.repair != nil) && provider == scm.ProviderGitHub {
 		event, err := s.scm.VerifyWebhook(provider, r.Header, body)
 		if errors.Is(err, scm.ErrInvalidWebhook) {
 			writeError(w, http.StatusUnauthorized, "webhook_invalid")
@@ -189,6 +192,39 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, provider 
 			}
 			if actionable {
 				task = diagnosisTask
+			}
+		}
+		if !actionable && s.repair != nil && event.EventType == "issues" {
+			action := normalizedString(event, "action")
+			if action == "opened" || action == "reopened" {
+				repository, lookupErr := s.scm.FindRepository(r.Context(), scm.ProviderGitHub, normalizedString(event, "repositoryId"))
+				if lookupErr != nil {
+					err = lookupErr
+				} else {
+					actor, actorErr := s.auth.SystemActor(r.Context())
+					if actorErr != nil {
+						err = actorErr
+					} else {
+						number, parseErr := strconv.Atoi(normalizedString(event, "issueNumber"))
+						if parseErr != nil {
+							err = parseErr
+						} else {
+							createdRepair, createErr := s.repair.CreateFromIssue(r.Context(), repair.Issue{
+								Provider: "github", RepositoryID: repository.ID, Repository: normalizedString(event, "repository"),
+								CloneURL: normalizedString(event, "cloneURL"), WebURL: normalizedString(event, "webURL"),
+								InstallationID: normalizedString(event, "installationId"), Number: number,
+								Title: normalizedString(event, "issueTitle"), Body: normalizedString(event, "issueBody"),
+								State: normalizedString(event, "issueState"), IsPullRequest: normalizedString(event, "isPullRequest") == "true",
+								BaseBranch: normalizedString(event, "defaultBranch")}, actor.ID)
+							if createErr != nil {
+								err = createErr
+							} else {
+								task, err = s.tasks.Get(r.Context(), createdRepair.TaskID)
+								actionable = err == nil
+							}
+						}
+					}
+				}
 			}
 		}
 		if err != nil {
@@ -240,4 +276,11 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request, provider 
 	writeJSON(w, http.StatusAccepted, map[string]string{
 		"status": status, "provider": strings.ToLower(string(provider)),
 	})
+}
+
+func normalizedString(event scm.WebhookEvent, key string) string {
+	if value, ok := event.Normalized[key]; ok {
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+	return ""
 }
