@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/EasonW3300/repoMender/server/internal/approvals"
 	"github.com/EasonW3300/repoMender/server/internal/auth"
 	"github.com/EasonW3300/repoMender/server/internal/config"
 	"github.com/EasonW3300/repoMender/server/internal/database"
@@ -42,6 +43,7 @@ type Server struct {
 	tasks        *tasks.Service
 	review       *review.Service
 	diagnosis    *diagnosis.Service
+	approvals    *approvals.Service
 	cookieSecure bool
 }
 
@@ -129,6 +131,25 @@ func NewWithDiagnosisServices(
 	return server
 }
 
+// NewWithApprovalServices adds M7 without changing constructors used by M0-M6
+// tests and deployments where the approval feature flag remains disabled.
+func NewWithApprovalServices(
+	checker HealthChecker,
+	service *auth.Service,
+	provider auth.OIDCProvider,
+	scmService *scm.Service,
+	taskService *tasks.Service,
+	reviewService *review.Service,
+	diagnosisService *diagnosis.Service,
+	approvalService *approvals.Service,
+	cookieSecure bool,
+	readiness ...ReadinessDependency,
+) *Server {
+	server := NewWithDiagnosisServices(checker, service, provider, scmService, taskService, reviewService, diagnosisService, cookieSecure, readiness...)
+	server.approvals = approvalService
+	return server
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", s.live)
@@ -170,6 +191,14 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/v1/runs/{id}", s.getRun)
 		mux.HandleFunc("GET /api/v1/runs/{id}/events", s.runEvents)
 		mux.HandleFunc("GET /api/v1/audit-events", s.auditEvents)
+	}
+	if s.auth != nil && s.approvals != nil {
+		mux.HandleFunc("GET /api/v1/approvals", s.listApprovals)
+		mux.HandleFunc("POST /api/v1/approvals", s.createApproval)
+		mux.HandleFunc("GET /api/v1/approvals/{id}", s.getApproval)
+		mux.HandleFunc("POST /api/v1/approvals/{id}/decision", s.decideApproval)
+		mux.HandleFunc("POST /api/v1/approvals/{id}/consume", s.consumeApproval)
+		mux.HandleFunc("POST /api/v1/approvals/{id}/cancel", s.cancelApproval)
 	}
 	return securityHeaders(mux)
 }
@@ -240,9 +269,13 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 	if cfg.FeatureM6CIDiagnosis && cfg.FeatureM2SCM && cfg.FeatureM4Tasks && scmService != nil && taskService != nil {
 		diagnosisService = diagnosis.NewService(taskService, scmService)
 	}
+	var approvalService *approvals.Service
+	if cfg.FeatureM7Approvals && cfg.FeatureM4Tasks && taskService != nil {
+		approvalService = approvals.NewService(approvals.NewPostgreSQLStore(db), taskService)
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           NewWithDiagnosisServices(db, service, provider, scmService, taskService, reviewService, diagnosisService, cfg.CookieSecure, readiness...).Handler(),
+		Handler:           NewWithApprovalServices(db, service, provider, scmService, taskService, reviewService, diagnosisService, approvalService, cfg.CookieSecure, readiness...).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
