@@ -31,7 +31,14 @@ type Config struct {
 	FeatureM7Approvals   bool
 	FeatureM8IssueRepair bool
 	FeatureM9Automations bool
+	FeatureM10Hardening  bool
 	FeatureGitLab        bool
+	ServiceVersion       string
+	MetricsToken         string
+	OTELExporterEndpoint string
+	RetentionDays        int
+	RateLimitPerMinute   int
+	BackupDirectory      string
 	SCMMasterKey         []byte
 	GitHubAppID          int64
 	GitHubAppSlug        string
@@ -111,6 +118,18 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	featureM10Hardening, err := boolOrDefault(lookup, "REPOMENDER_FEATURE_M10_HARDENING", false)
+	if err != nil {
+		return Config{}, err
+	}
+	retentionDays, err := intOrDefault(lookup, "REPOMENDER_RETENTION_DAYS", 365)
+	if err != nil {
+		return Config{}, err
+	}
+	rateLimitPerMinute, err := intOrDefault(lookup, "REPOMENDER_RATE_LIMIT_PER_MINUTE", 120)
+	if err != nil {
+		return Config{}, err
+	}
 	masterKey, err := decodeBase64Value(lookup, "REPOMENDER_MASTER_KEY")
 	if err != nil {
 		return Config{}, err
@@ -142,7 +161,14 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 		FeatureM7Approvals:   featureM7Approvals,
 		FeatureM8IssueRepair: featureM8IssueRepair,
 		FeatureM9Automations: featureM9Automations,
+		FeatureM10Hardening:  featureM10Hardening,
 		FeatureGitLab:        featureGitLab,
+		ServiceVersion:       valueOrDefault(lookup, "REPOMENDER_SERVICE_VERSION", "dev"),
+		MetricsToken:         valueOrDefault(lookup, "REPOMENDER_METRICS_TOKEN", ""),
+		OTELExporterEndpoint: strings.TrimRight(valueOrDefault(lookup, "OTEL_EXPORTER_OTLP_ENDPOINT", ""), "/"),
+		RetentionDays:        retentionDays,
+		RateLimitPerMinute:   rateLimitPerMinute,
+		BackupDirectory:      valueOrDefault(lookup, "REPOMENDER_BACKUP_DIRECTORY", "/var/lib/repomender/backups"),
 		SCMMasterKey:         masterKey,
 		GitHubAppID:          githubAppID,
 		GitHubAppSlug:        valueOrDefault(lookup, "REPOMENDER_GITHUB_APP_SLUG", ""),
@@ -249,6 +275,12 @@ func load(lookup func(string) (string, bool)) (Config, error) {
 	if cfg.FeatureM9Automations && strings.TrimSpace(cfg.ACProjectID) == "" {
 		return Config{}, errors.New("REPOMENDER_AC_PROJECT_ID is required when M9 automations are enabled")
 	}
+	if cfg.RetentionDays <= 0 || cfg.RateLimitPerMinute <= 0 {
+		return Config{}, errors.New("retention days and rate limit must be positive")
+	}
+	if cfg.FeatureM10Hardening && !cfg.FeatureM9Automations {
+		return Config{}, errors.New("REPOMENDER_FEATURE_M10_HARDENING requires M9 automations")
+	}
 
 	return cfg, nil
 }
@@ -290,6 +322,18 @@ func int64OrDefault(lookup func(string) (string, bool), key string, fallback int
 		return fallback, nil
 	}
 	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0, errors.New(key + " must be a positive integer")
+	}
+	return parsed, nil
+}
+
+func intOrDefault(lookup func(string) (string, bool), key string, fallback int) (int, error) {
+	value, ok := lookup(key)
+	if !ok || value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
 		return 0, errors.New(key + " must be a positive integer")
 	}
