@@ -2,7 +2,7 @@
 
 RepoMender is a self-hosted engineering automation platform for governed code review, CI diagnosis, issue repair, approval governance, and automation administration. It keeps repository policy, workflow state, approvals, audit history, and evidence in RepoMender while delegating isolated agent execution to [Agent Compose](https://github.com/EasonW3300/agent-compose).
 
-[Main README](README.md) · [Technical architecture](docs/architecture/TECHNICAL-ARCHITECTURE.en.md) · [中文架构](docs/architecture/TECHNICAL-ARCHITECTURE.md)
+[Main README](README.md) · [Technical architecture](docs/architecture/TECHNICAL-ARCHITECTURE.en.md) · [中文架构](docs/architecture/TECHNICAL-ARCHITECTURE.md) · [User guide](docs/user-guide/USER-GUIDE.en.md) · [中文使用说明](docs/user-guide/USER-GUIDE.md)
 
 ## Product boundaries
 

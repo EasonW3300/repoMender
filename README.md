@@ -3,6 +3,8 @@
 English README: [README.en.md](README.en.md). Technical architecture:
 [中文](docs/architecture/TECHNICAL-ARCHITECTURE.md) ·
 [English](docs/architecture/TECHNICAL-ARCHITECTURE.en.md).
+User guide: [中文](docs/user-guide/USER-GUIDE.md) ·
+[English](docs/user-guide/USER-GUIDE.en.md).
 
 RepoMender is an enterprise, self-hosted engineering automation platform for
 governed code review, CI diagnosis, and issue repair. It uses
