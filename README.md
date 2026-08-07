@@ -1,5 +1,9 @@
 # RepoMender
 
+English README: [README.en.md](README.en.md). Technical architecture:
+[中文](docs/architecture/TECHNICAL-ARCHITECTURE.md) ·
+[English](docs/architecture/TECHNICAL-ARCHITECTURE.en.md).
+
 RepoMender is an enterprise, self-hosted engineering automation platform for
 governed code review, CI diagnosis, and issue repair. It uses
 [Agent Compose](https://github.com/EasonW3300/agent-compose) as an independent

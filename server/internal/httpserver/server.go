@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	// io lets decodeJSON distinguish trailing whitespace from a second JSON value.
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -654,6 +656,12 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return false
+	}
+	// A request must contain exactly one JSON document; otherwise an attacker
+	// could append a second value that different downstream parsers interpret.
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return false
 	}

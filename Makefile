@@ -1,4 +1,4 @@
-.PHONY: dev up down m0-verify m1-verify m2-verify m6-verify m7-verify m8-verify m9-verify m10-verify backend-test backend-integration backup restore
+.PHONY: dev up down m0-verify m1-verify m2-verify m6-verify m7-verify m8-verify m9-verify m10-verify backend-test backend-integration backend-coverage ops-test backup restore
 
 dev:
 	npm run dev
@@ -10,10 +10,17 @@ down:
 	docker compose down
 
 backend-test:
-	cd server && go test -race ./... && go vet ./...
+	cd server && go test -race -count=1 ./... && go vet ./...
 
 backend-integration:
-	cd server && go test -p=1 -tags=integration ./internal/database ./internal/auth ./internal/scm ./internal/approvals ./internal/repair ./internal/automations
+	cd server && go test -count=1 -p=1 -tags=integration ./internal/database ./internal/auth ./internal/scm ./internal/tasks ./internal/approvals ./internal/repair ./internal/automations ./internal/retention
+
+backend-coverage:
+	cd server && go test -count=1 -covermode=atomic -coverprofile=coverage.out ./... && ../scripts/check-go-coverage.sh coverage.out
+
+ops-test:
+	bash -n scripts/backup.sh scripts/restore.sh scripts/check-go-coverage.sh scripts/ops-regression.sh
+	./scripts/ops-regression.sh
 
 m0-verify:
 	npm run lint

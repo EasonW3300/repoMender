@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	// strings supplies deterministic request bodies for JSON boundary tests.
+	"strings"
 	"testing"
 )
 
@@ -110,5 +112,34 @@ func TestM10SecureTransportAddsHSTS(t *testing.T) {
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health/live", nil))
 	if response.Header().Get("Strict-Transport-Security") == "" {
 		t.Fatal("secure transport missing HSTS")
+	}
+}
+
+func TestDecodeJSONRejectsTrailingDocument(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/test", strings.NewReader(`{"ok":true}{"unexpected":true}`))
+	response := httptest.NewRecorder()
+
+	if decodeJSON(response, request, &struct {
+		OK bool `json:"ok"`
+	}{}) {
+		t.Fatal("decodeJSON accepted multiple JSON documents")
+	}
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+}
+
+func TestDecodeJSONAcceptsTrailingWhitespace(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/test", strings.NewReader("{\"ok\":true}\n  \t"))
+	response := httptest.NewRecorder()
+	var value struct {
+		OK bool `json:"ok"`
+	}
+
+	if !decodeJSON(response, request, &value) {
+		t.Fatal("decodeJSON rejected trailing whitespace")
+	}
+	if !value.OK {
+		t.Fatal("decoded value lost the JSON field")
 	}
 }

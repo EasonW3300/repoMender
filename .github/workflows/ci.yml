@@ -5,12 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,8 +27,32 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  frontend-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      # This is intentionally advisory until the existing Next/Vite dependency
+      # debt is upgraded in a compatibility-scoped change; the report remains
+      # visible without making every PR unmergeable on the baseline.
+      - id: npm-audit
+        continue-on-error: true
+        run: npm audit --audit-level=high
+      - if: steps.npm-audit.outcome != 'success'
+        run: |
+          {
+            echo "### npm audit warning"
+            echo "High-severity dependency advisories are present; see the audit step and review report."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16-alpine
@@ -49,15 +78,46 @@ jobs:
         with:
           go-version: "1.26"
           cache-dependency-path: server/go.sum
-      - run: go test -race ./...
+      - run: go test -race -count=1 ./...
       - run: go vet ./...
+      - run: go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+      - run: ../scripts/check-go-coverage.sh coverage.out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: server/coverage.out
+          if-no-files-found: error
       # These packages intentionally exercise migration rollback and table
       # cleanup against one service database, so package execution is serial.
-      - run: go test -p=1 -tags=integration ./internal/database ./internal/auth ./internal/scm ./internal/tasks
+      - run: go test -count=1 -p=1 -tags=integration ./internal/database ./internal/auth ./internal/scm ./internal/tasks ./internal/approvals ./internal/repair ./internal/automations ./internal/retention
+
+  operations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/ops-regression.sh
 
   compose:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - run: docker compose config --quiet
       - run: docker compose -f compose.yaml -f compose.scm-smoke.yaml config --quiet
+      - run: docker compose -f compose.yaml -f compose.scm-smoke.yaml -f compose.m6-smoke.yaml -f compose.m7-smoke.yaml -f compose.m8-smoke.yaml -f compose.m9-smoke.yaml -f compose.m10-smoke.yaml config --quiet
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --file Dockerfile.server --tag repomender-server:ci --build-arg REPOMENDER_VERSION=ci .
+      - run: docker build --file Dockerfile.web --tag repomender-web:ci .
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/dependency-review-action@v4

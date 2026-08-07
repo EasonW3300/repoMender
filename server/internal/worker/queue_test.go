@@ -11,10 +11,11 @@ import (
 )
 
 type fakeQueue struct {
-	mu       sync.Mutex
-	claimed  bool
-	complete int
-	claimErr error
+	mu         sync.Mutex
+	claimed    bool
+	complete   int
+	completeCh chan struct{}
+	claimErr   error
 }
 
 func (q *fakeQueue) Claim(context.Context, string, time.Duration) (tasks.Task, tasks.Run, error) {
@@ -36,6 +37,10 @@ func (q *fakeQueue) Complete(context.Context, string, string, tasks.Status, stri
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.complete++
+	if q.completeCh != nil {
+		close(q.completeCh)
+		q.completeCh = nil
+	}
 	return nil
 }
 
@@ -46,15 +51,28 @@ func (fakeProcessor) Process(context.Context, tasks.Task, tasks.Run) (tasks.Stat
 }
 
 func TestRunQueueClaimsAndCompletesOnce(t *testing.T) {
-	queue := &fakeQueue{}
+	queue := &fakeQueue{completeCh: make(chan struct{})}
+	complete := queue.completeCh
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	done := make(chan error, 1)
 	go func() {
-		_ = RunQueue(ctx, time.Millisecond, time.Second, "worker-1", queue, fakeProcessor{})
+		done <- RunQueue(ctx, time.Millisecond, time.Second, "worker-1", queue, fakeProcessor{})
 	}()
-	time.Sleep(10 * time.Millisecond)
+	select {
+	case <-complete:
+	case <-time.After(time.Second):
+		t.Fatal("queue did not complete the claimed task")
+	}
 	cancel()
-	time.Sleep(5 * time.Millisecond)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunQueue() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunQueue() did not stop after cancellation")
+	}
 	queue.mu.Lock()
 	defer queue.mu.Unlock()
 	if queue.complete != 1 {
