@@ -4,6 +4,7 @@ import type { FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { approvals, navigation, tasks, TaskRecord, Tone } from "../lib/data";
+import { LanguageProvider, useLanguage } from "../lib/i18n";
 
 // React effects load same-origin SCM APIs after hydration, while Next navigation
 // provides durable, shareable URLs for repository list and detail screens.
@@ -79,28 +80,29 @@ function Metric({ label, value, note, positive }: { label: string; value: string
 }
 
 function TaskTable({ rows, onOpen }: { rows: TaskRecord[]; onOpen: (route: string) => void }) {
+  const { t } = useLanguage();
   return (
     <div className="table-scroll">
       <table>
         <thead>
           <tr>
-            <th>Task</th>
-            <th>Repository</th>
-            <th>Status</th>
-            <th>Agent</th>
-            <th>Duration</th>
-            <th>Updated</th>
+            <th>{t("task")}</th>
+            <th>{t("repository")}</th>
+            <th>{t("status")}</th>
+            <th>{t("agent")}</th>
+            <th>{t("duration")}</th>
+            <th>{t("updated")}</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((task) => (
             <tr key={`${task.type}-${task.id}`} onClick={() => onOpen(task.route)} tabIndex={0} onKeyDown={(event) => event.key === "Enter" && onOpen(task.route)}>
               <td>
-                <strong>{task.id} · {task.type}</strong>
+                <strong>{task.id} · {taskTypeLabel(task.type, t)}</strong>
                 <small>{task.title}</small>
               </td>
               <td>{task.repository}</td>
-              <td><Status tone={task.tone}>{task.status}</Status></td>
+              <td><Status tone={task.tone}>{taskStatusText(task.status, t)}</Status></td>
               <td>{task.agent}</td>
               <td>{task.duration}</td>
               <td>{task.updated}</td>
@@ -110,6 +112,29 @@ function TaskTable({ rows, onOpen }: { rows: TaskRecord[]; onOpen: (route: strin
       </table>
     </div>
   );
+}
+
+function taskTypeLabel(type: TaskRecord["type"], t: (key: string) => string): string {
+  if (type === "Code Review") return t("codeReviews");
+  if (type === "CI Diagnosis") return t("ciDiagnostics");
+  return t("issueRepairs");
+}
+
+function taskStatusText(status: string, t: (key: string) => string): string {
+  const labels: Record<string, string> = {
+    "Critical finding": "criticalFinding",
+    "Awaiting approval": "awaitingApprovalStatus",
+    "Plan approval": "planApproval",
+    Passed: "passed",
+    "Patch verified": "patchVerified",
+    succeeded: "succeeded",
+    failed: "failed",
+    cancelled: "cancelled",
+    superseded: "superseded",
+    queued: "queued",
+    awaiting_approval: "awaitingApprovalTask",
+  };
+  return labels[status] ? t(labels[status]) : status;
 }
 
 type APITask = {
@@ -159,8 +184,9 @@ function taskStatusLabel(status: string): string {
 }
 
 function TasksPage({ navigate, kindFilter }: { navigate: (route: string) => void; kindFilter?: APITask["kind"] }) {
+  const { t } = useLanguage();
   const [items, setItems] = useState<APITask[]>([]);
-  const [filter, setFilter] = useState("All");
+  const [filter, setFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
 
@@ -192,9 +218,9 @@ function TasksPage({ navigate, kindFilter }: { navigate: (route: string) => void
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  const visible = filter === "Needs attention"
+  const visible = filter === "needsAttention"
     ? items.filter((item) => !["succeeded", "cancelled", "superseded"].includes(item.status))
-    : filter === "Running"
+    : filter === "running"
       ? items.filter((item) => item.status === "running")
       : items;
 	const rows: TaskRecord[] = visible.map((item) => ({
@@ -202,27 +228,27 @@ function TasksPage({ navigate, kindFilter }: { navigate: (route: string) => void
     type: taskKindLabel(item.kind),
     title: item.title,
     repository: item.repositoryName || "—",
-    status: taskStatusLabel(item.status),
+		status: taskStatusLabel(item.status),
     tone: taskTone(item.status),
     agent: `Attempt ${item.attempts}/${item.maxAttempts}`,
     duration: "—",
     updated: new Date(item.updatedAt).toLocaleString(),
 		route: `${kindFilter === "code_review" ? "/reviews" : kindFilter === "ci_diagnosis" ? "/diagnostics" : "/tasks"}/${encodeURIComponent(item.id)}`,
 	}));
-	const moduleLabel = kindFilter === "code_review" ? "M5 code review" : kindFilter === "ci_diagnosis" ? "M6 CI diagnosis" : "M4 task core";
-	const pageTitle = kindFilter === "code_review" ? "Code reviews" : kindFilter === "ci_diagnosis" ? "CI diagnostics" : "All tasks";
+	const moduleLabel = kindFilter === "code_review" ? `M5 ${t("codeReviews")}` : kindFilter === "ci_diagnosis" ? `M6 ${t("ciDiagnostics")}` : "M4 task core";
+	const pageTitle = kindFilter === "code_review" ? t("codeReviews") : kindFilter === "ci_diagnosis" ? t("ciDiagnostics") : t("allTasks");
 	const pageDescription = kindFilter === "code_review" ? "GitHub pull request reviews, findings, evidence, and immutable commit runs." : kindFilter === "ci_diagnosis" ? "Failed GitHub Actions runs, redacted logs, root-cause hypotheses, and reproduction evidence." : "Durable reviews, diagnostics, repairs, retries, and audit-linked runs.";
 
   return (
     <>
-	<PageHeader eyebrow={`Engineering · ${moduleLabel}`} title={pageTitle} description={pageDescription} actions={<button className="secondary-button" onClick={() => void load()}>Refresh</button>} />
+	<PageHeader eyebrow={`${t("engineering")} · ${moduleLabel}`} title={pageTitle} description={pageDescription} actions={<button className="secondary-button" onClick={() => void load()}>{t("refresh")}</button>} />
       {message ? <div className="identity-message" role="status">{message}</div> : null}
-      <div className="filter-bar" aria-label="Task filters">
-        {["All", "Needs attention", "Running"].map((item) => <button key={item} className={filter === item ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(item)}>{item}</button>)}
+      <div className="filter-bar" aria-label={t("task")}>
+		{[["all", t("all")], ["needsAttention", t("needsAttention")], ["running", t("running")]].map(([key, label]) => <button key={key} className={filter === key ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(key)}>{label}</button>)}
       </div>
       <section className="panel">
-        <div className="panel-heading"><div><span className="eyebrow">Persistent queue</span><h2>{loading ? "Loading tasks…" : `${rows.length} tasks`}</h2></div><span className="eyebrow">PostgreSQL-backed</span></div>
-        {!loading && rows.length ? <TaskTable rows={rows} onOpen={navigate} /> : <div className="empty-state"><strong>{loading ? "Reading durable task state…" : "No tasks found"}</strong><span>{message || "Tasks created by GitHub triggers and governed operators will appear here."}</span></div>}
+		<div className="panel-heading"><div><span className="eyebrow">{t("persistentQueue")}</span><h2>{loading ? t("loading") : `${rows.length} ${t("task")}`}</h2></div><span className="eyebrow">{t("postgresBacked")}</span></div>
+		{!loading && rows.length ? <TaskTable rows={rows} onOpen={navigate} /> : <div className="empty-state"><strong>{loading ? t("loading") : t("noTasks")}</strong><span>{message || t("noTasksHint")}</span></div>}
       </section>
     </>
   );
@@ -299,51 +325,52 @@ function TaskDetailPage({ id, navigate, backRoute = "/tasks" }: { id: string; na
 }
 
 function Dashboard({ navigate }: { navigate: (route: string) => void }) {
+  const { t } = useLanguage();
   return (
     <>
       <PageHeader
-        eyebrow="Acme Engineering · Payments Platform"
-        title="What needs your attention"
-        description="Five approvals, two high-risk findings, and one unhealthy automation."
-        actions={<button className="primary-button" onClick={() => navigate("/automations")}>Create automation</button>}
+        eyebrow={t("dashboardEyebrow")}
+        title={t("attentionTitle")}
+        description={t("attentionDescription")}
+        actions={<button className="primary-button" onClick={() => navigate("/automations")}>{t("createAutomation")}</button>}
       />
-      <section className="metric-grid" aria-label="Engineering metrics">
-        <Metric label="Tasks this week" value="248" note="↑ 12.4% from last week" positive />
-        <Metric label="Awaiting approval" value="5" note="2 high-risk requests" />
-        <Metric label="Mean CI diagnosis" value="6m 42s" note="↓ 1m 08s from last week" positive />
-        <Metric label="Repair success rate" value="83.6%" note="42 pull requests merged" positive />
+      <section className="metric-grid" aria-label={t("engineeringMetrics")}>
+        <Metric label={t("tasksThisWeek")} value="248" note={`↑ 12.4% ${t("fromLastWeek")}`} positive />
+        <Metric label={t("awaitingApproval")} value="5" note={t("highRiskRequests")} />
+        <Metric label={t("meanCiDiagnosis")} value="6m 42s" note={`↓ 1m 08s ${t("fromLastWeek")}`} positive />
+        <Metric label={t("repairSuccessRate")} value="83.6%" note={t("pullRequestsMerged")} positive />
       </section>
       <div className="dashboard-grid">
         <div>
           <section className="panel">
             <div className="panel-heading">
-              <div><span className="eyebrow">Action queue</span><h2>Needs attention</h2></div>
-              <button className="text-button" onClick={() => navigate("/approvals")}>View all</button>
+              <div><span className="eyebrow">{t("actionQueue")}</span><h2>{t("needsAttention")}</h2></div>
+              <button className="text-button" onClick={() => navigate("/approvals")}>{t("viewAll")}</button>
             </div>
             <button className="attention-row" onClick={() => navigate("/reviews/1842")}>
               <i className="risk-bar risk-critical" />
               <span><strong>#1842 may create duplicate captures</strong><small>payments-api · Senior Go Reviewer · 94% confidence</small></span>
-              <Status tone="critical">Critical</Status>
+              <Status tone="critical">{t("highRisk")}</Status>
             </button>
             <button className="attention-row" onClick={() => navigate("/repairs/731")}>
               <i className="risk-bar risk-info" />
               <span><strong>Repair plan is ready for approval</strong><small>Issue #731 · 3 files · estimated $1.84</small></span>
-              <Status tone="info">Approval</Status>
+              <Status tone="info">{t("awaitingApproval")}</Status>
             </button>
             <button className="attention-row" onClick={() => navigate("/diagnostics/pg16")}>
               <i className="risk-bar risk-warning" />
               <span><strong>PostgreSQL 16 integration tests are failing</strong><small>Root cause reproduced in sandbox sbx_8f2</small></span>
-              <Status tone="high">High</Status>
+              <Status tone="high">{t("highRisk")}</Status>
             </button>
           </section>
           <section className="panel section-gap">
-            <div className="panel-heading"><div><span className="eyebrow">Execution</span><h2>Recent tasks</h2></div><button className="text-button" onClick={() => navigate("/tasks")}>All tasks</button></div>
+            <div className="panel-heading"><div><span className="eyebrow">{t("engineering")}</span><h2>{t("recentTasks")}</h2></div><button className="text-button" onClick={() => navigate("/tasks")}>{t("allTasks")}</button></div>
             <TaskTable rows={tasks.slice(0, 4)} onOpen={navigate} />
           </section>
         </div>
         <aside>
           <section className="panel approval-summary">
-            <div className="panel-heading"><div><span className="eyebrow">Human control</span><h2>Approvals</h2></div><strong>5</strong></div>
+            <div className="panel-heading"><div><span className="eyebrow">{t("humanControl")}</span><h2>{t("approvals")}</h2></div><strong>5</strong></div>
             {approvals.slice(0, 3).map((approval) => (
               <button className="mini-approval" key={approval.title} onClick={() => navigate("/approvals")}>
                 <span><strong>{approval.title}</strong><small>{approval.context}</small></span>
@@ -352,9 +379,9 @@ function Dashboard({ navigate }: { navigate: (route: string) => void }) {
             ))}
           </section>
           <section className="panel section-gap health-card">
-            <div className="panel-heading"><div><span className="eyebrow">Repository health</span><h2>payments-api</h2></div><button className="text-button" onClick={() => navigate("/repositories/payments-api")}>Open</button></div>
+            <div className="panel-heading"><div><span className="eyebrow">{t("repositoryHealth")}</span><h2>payments-api</h2></div><button className="text-button" onClick={() => navigate("/repositories/payments-api")}>{t("open")}</button></div>
             <div className="health-visual"><div className="health-ring"><strong>79</strong><span>/ 100</span></div><div className="spark-bars">{[42, 51, 48, 58, 55, 66, 79].map((height, index) => <i key={index} style={{ height: `${height}%` }} />)}</div></div>
-            <div className="warning-callout"><strong>Automation degraded</strong><span>nightly-dependency-scan failed three times due to provider rate limits.</span></div>
+            <div className="warning-callout"><strong>{t("automationDegraded")}</strong><span>{t("repositoryRateLimit")}</span></div>
           </section>
         </aside>
       </div>
@@ -373,20 +400,21 @@ function ListPage({
   description: string;
   navigate: (route: string) => void;
 }) {
-  const [filter, setFilter] = useState("All");
+  const { t } = useLanguage();
+  const [filter, setFilter] = useState("all");
   const rows = useMemo(() => type ? tasks.filter((task) => task.type === type) : tasks, [type]);
-  const visibleRows = filter === "Needs attention" ? rows.filter((task) => !["Passed", "Patch verified"].includes(task.status)) : rows;
+  const visibleRows = filter === "needsAttention" ? rows.filter((task) => !["Passed", "Patch verified"].includes(task.status)) : rows;
 
   return (
     <>
-      <PageHeader eyebrow="Engineering" title={title} description={description} actions={<button className="secondary-button">Export report</button>} />
-      <div className="filter-bar" aria-label={`${title} filters`}>
-        {["All", "Needs attention", "Running", "Last 7 days"].map((item) => (
-          <button key={item} className={filter === item ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(item)}>{item}</button>
+      <PageHeader eyebrow={t("engineering")} title={title} description={description} actions={<button className="secondary-button">{t("exportReport")}</button>} />
+      <div className="filter-bar" aria-label={title}>
+        {[["all", t("all")], ["needsAttention", t("needsAttention")], ["running", t("running")], ["last7Days", t("last7Days")]].map(([key, label]) => (
+          <button key={key} className={filter === key ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(key)}>{label}</button>
         ))}
       </div>
       <section className="panel">
-        <div className="panel-heading"><div><span className="eyebrow">Live queue</span><h2>{visibleRows.length} tasks</h2></div><button className="text-button">Customize columns</button></div>
+        <div className="panel-heading"><div><span className="eyebrow">{t("persistentQueue")}</span><h2>{visibleRows.length} {t("task")}</h2></div><button className="text-button">{t("customizeColumns")}</button></div>
         <TaskTable rows={visibleRows} onOpen={navigate} />
       </section>
     </>
@@ -537,10 +565,10 @@ function RepairDetail({ openDialog }: { openDialog: (dialog: DialogState) => voi
   );
 }
 
-function approvalLabel(action: APIApproval["action"]): string {
-  if (action === "repair_plan") return "Repair plan";
-  if (action === "publish_patch") return "Publish patch";
-  return "Sandbox network";
+function localizedApprovalLabel(action: APIApproval["action"], t: (key: string) => string): string {
+  if (action === "repair_plan") return t("plans");
+  if (action === "publish_patch") return t("patches");
+  return t("permissions");
 }
 
 function approvalTone(risk: APIApproval["risk"]): Tone {
@@ -551,8 +579,9 @@ function approvalTone(risk: APIApproval["risk"]): Tone {
 }
 
 function ApprovalsPage() {
+  const { t } = useLanguage();
   const [items, setItems] = useState<APIApproval[]>([]);
-  const [filter, setFilter] = useState("All");
+  const [filter, setFilter] = useState("all");
   const [selected, setSelected] = useState<APIApproval | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -585,10 +614,10 @@ function ApprovalsPage() {
   }, [load]);
 
   const visible = items.filter((item) => {
-    if (filter === "High risk") return item.risk === "high" || item.risk === "critical";
-    if (filter === "Plans") return item.action === "repair_plan";
-    if (filter === "Patches") return item.action === "publish_patch";
-    if (filter === "Permissions") return item.action === "sandbox_network";
+    if (filter === "highRisk") return item.risk === "high" || item.risk === "critical";
+    if (filter === "plans") return item.action === "repair_plan";
+    if (filter === "patches") return item.action === "publish_patch";
+    if (filter === "permissions") return item.action === "sandbox_network";
     return true;
   });
 
@@ -615,21 +644,21 @@ function ApprovalsPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Engineering · Human control" title="Approval center" description="Review high-impact agent actions with evidence, scope, and cost before execution." actions={<button className="secondary-button" onClick={() => void load()}>Refresh</button>} />
-      <div className="filter-bar">{["All", "High risk", "Plans", "Patches", "Permissions"].map((item) => <button key={item} className={filter === item ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(item)}>{item}</button>)}</div>
+      <PageHeader eyebrow={`${t("engineering")} · ${t("humanControl")}`} title={t("approvalCenter")} description={t("approvalDescription")} actions={<button className="secondary-button" onClick={() => void load()}>{t("refresh")}</button>} />
+      <div className="filter-bar">{[["all", t("all")], ["highRisk", t("highRisk")], ["plans", t("plans")], ["patches", t("patches")], ["permissions", t("permissions")]].map(([key, label]) => <button key={key} className={filter === key ? "filter-chip active" : "filter-chip"} onClick={() => setFilter(key)}>{label}</button>)}</div>
       {message ? <div className="identity-message" role="status">{message}</div> : null}
       <section className="approval-grid">
         {!loading && visible.length ? visible.map((approval) => (
           <article className="approval-card" key={approval.id} onClick={() => setSelected(approval)}>
             <Status tone={approvalTone(approval.risk)}>{approval.risk}</Status>
-            <span className="eyebrow">{approvalLabel(approval.action)}</span>
+            <span className="eyebrow">{localizedApprovalLabel(approval.action, t)}</span>
             <h2>{approval.id.slice(0, 12)}</h2>
             <p>Exact action digest <code>{approval.actionDigest.slice(0, 16)}…</code></p>
-            <div className="approval-card-footer"><small>Expires {new Date(approval.expiresAt).toLocaleString()}</small><button className="primary-button" onClick={(event) => { event.stopPropagation(); setSelected(approval); }}>Review</button></div>
+            <div className="approval-card-footer"><small>Expires {new Date(approval.expiresAt).toLocaleString()}</small><button className="primary-button" onClick={(event) => { event.stopPropagation(); setSelected(approval); }}>{t("review")}</button></div>
           </article>
-        )) : <div className="empty-state"><strong>{loading ? "Loading approval inbox…" : "No approval requests"}</strong><span>{message || "Protected plans, patches, and sandbox permissions will appear here."}</span></div>}
+        )) : <div className="empty-state"><strong>{loading ? t("loading") : t("noApprovalRequests")}</strong><span>{message || t("approvalHint")}</span></div>}
       </section>
-      {selected ? <section className="panel section-gap" aria-label="Approval detail"><div className="panel-heading"><div><span className="eyebrow">Approval detail</span><h2>{approvalLabel(selected.action)} · {selected.id.slice(0, 12)}</h2></div><Status tone={selected.state === "approved" ? "success" : selected.state === "pending" ? "warning" : "neutral"}>{selected.state}</Status></div><dl><div><dt>Action digest</dt><dd><code>{selected.actionDigest}</code></dd></div><div><dt>Eligible approvers</dt><dd>{selected.eligibleRoles.join(", ")}</dd></div><div><dt>Requested</dt><dd>{new Date(selected.requestedAt).toLocaleString()}</dd></div></dl>{selected.state === "pending" ? <div className="panel-footer"><button className="secondary-button" onClick={() => void decide(selected, "rejected")}>Reject</button><button className="primary-button" onClick={() => void decide(selected, "approved")}>Approve</button></div> : null}</section> : null}
+      {selected ? <section className="panel section-gap" aria-label={t("approvalCenter")}><div className="panel-heading"><div><span className="eyebrow">{t("approvalCenter")}</span><h2>{localizedApprovalLabel(selected.action, t)} · {selected.id.slice(0, 12)}</h2></div><Status tone={selected.state === "approved" ? "success" : selected.state === "pending" ? "warning" : "neutral"}>{selected.state}</Status></div><dl><div><dt>{t("status")}</dt><dd><code>{selected.actionDigest}</code></dd></div><div><dt>Eligible approvers</dt><dd>{selected.eligibleRoles.join(", ")}</dd></div><div><dt>Requested</dt><dd>{new Date(selected.requestedAt).toLocaleString()}</dd></div></dl>{selected.state === "pending" ? <div className="panel-footer"><button className="secondary-button" onClick={() => void decide(selected, "rejected")}>Reject</button><button className="primary-button" onClick={() => void decide(selected, "approved")}>Approve</button></div> : null}</section> : null}
     </>
   );
 }
@@ -640,6 +669,7 @@ function csrfToken() {
 }
 
 function RepositoriesPage({ navigate }: { navigate: (route: string) => void }) {
+  const { t } = useLanguage();
   const [connections, setConnections] = useState<SCMConnection[]>([]);
   const [connectedRepositories, setConnectedRepositories] = useState<ConnectedRepository[]>([]);
   const [providers, setProviders] = useState({ github: false, gitlab: false });
@@ -707,15 +737,15 @@ function RepositoriesPage({ navigate }: { navigate: (route: string) => void }) {
 
   return (
     <>
-      <PageHeader eyebrow="Assets · SCM" title="Repositories" description={providers.gitlab ? "GitHub and GitLab codebases synchronized through governed provider connections." : "GitHub repositories synchronized through a governed GitHub App connection."} actions={<div className="scm-actions">{providers.gitlab ? <button className="secondary-button" onClick={() => connect("gitlab")}>Connect GitLab</button> : null}<button className="primary-button" disabled={!providers.github} onClick={() => connect("github")}>Install GitHub App</button></div>} />
+      <PageHeader eyebrow={`${t("assets")} · SCM`} title={t("repositories")} description={providers.gitlab ? "GitHub and GitLab codebases synchronized through governed provider connections." : "GitHub repositories synchronized through a governed GitHub App connection."} actions={<div className="scm-actions">{providers.gitlab ? <button className="secondary-button" onClick={() => connect("gitlab")}>{t("connectGitlab")}</button> : null}<button className="primary-button" disabled={!providers.github} onClick={() => connect("github")}>{t("installGithubApp")}</button></div>} />
       {message ? <div className="identity-message scm-message" role="status">{message}</div> : null}
       <section className="panel scm-connections">
-        <div className="panel-heading"><div><span className="eyebrow">Connections</span><h2>{connections.length} active provider {connections.length === 1 ? "connection" : "connections"}</h2></div><Status tone={connections.length ? "success" : "neutral"}>{connections.length ? "Connected" : "Setup required"}</Status></div>
-        {connections.length ? <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={connection.id}><span className="repo-mark">{connection.provider === "github" ? "GH" : "GL"}</span><span><strong>{connection.name}</strong><small>{connection.provider} · {connection.status} · {connection.lastSyncedAt ? `synced ${new Date(connection.lastSyncedAt).toLocaleString()}` : "not synchronized"}</small></span><button className="secondary-button" disabled={syncing === connection.id} onClick={() => void sync(connection)}>{syncing === connection.id ? "Syncing…" : "Sync now"}</button></div>)}</div> : <div className="empty-state"><strong>Connect a source provider</strong><span>{providers.gitlab ? "Configure GitHub App or GitLab OAuth credentials, then authorize a connection." : "Configure and install the RepoMender GitHub App to synchronize repositories."}</span></div>}
+        <div className="panel-heading"><div><span className="eyebrow">{t("connections")}</span><h2>{connections.length} active provider {connections.length === 1 ? "connection" : "connections"}</h2></div><Status tone={connections.length ? "success" : "neutral"}>{connections.length ? "Connected" : "Setup required"}</Status></div>
+        {connections.length ? <div className="connection-list">{connections.map((connection) => <div className="connection-row" key={connection.id}><span className="repo-mark">{connection.provider === "github" ? "GH" : "GL"}</span><span><strong>{connection.name}</strong><small>{connection.provider} · {connection.status} · {connection.lastSyncedAt ? `synced ${new Date(connection.lastSyncedAt).toLocaleString()}` : "not synchronized"}</small></span><button className="secondary-button" disabled={syncing === connection.id} onClick={() => void sync(connection)}>{syncing === connection.id ? t("syncing") : t("syncNow")}</button></div>)}</div> : <div className="empty-state"><strong>{t("connectSource")}</strong><span>{providers.gitlab ? "Configure GitHub App or GitLab OAuth credentials, then authorize a connection." : "Configure and install the RepoMender GitHub App to synchronize repositories."}</span></div>}
       </section>
-      <section className="panel section-gap"><div className="panel-heading"><div><span className="eyebrow">Synchronized inventory</span><h2>{connectedRepositories.length} repositories</h2></div><button className="text-button" onClick={() => void load()}>Refresh inventory</button></div>
-        {loading ? <div className="empty-state"><strong>Loading connected repositories…</strong></div> : null}
-        {!loading && !connectedRepositories.length ? <div className="empty-state"><strong>No repositories synchronized</strong><span>Complete a provider connection or check its repository permissions.</span></div> : null}
+      <section className="panel section-gap"><div className="panel-heading"><div><span className="eyebrow">{t("synchronizedInventory")}</span><h2>{connectedRepositories.length} {t("repositories")}</h2></div><button className="text-button" onClick={() => void load()}>{t("refreshInventory")}</button></div>
+        {loading ? <div className="empty-state"><strong>{t("loading")}</strong></div> : null}
+        {!loading && !connectedRepositories.length ? <div className="empty-state"><strong>{t("noRepositories")}</strong><span>Complete a provider connection or check its repository permissions.</span></div> : null}
         {!loading && connectedRepositories.length ? <div className="repository-grid">{connectedRepositories.map((repository) => <button className={`repository-card${repository.enabled ? "" : " repository-disabled"}`} key={repository.id} onClick={() => navigate(`/repositories/${encodeURIComponent(repository.id)}`)}><div><span className="repo-mark">{repository.provider === "github" ? "GH" : "GL"}</span><span><strong>{repository.fullName}</strong><small>{repository.provider} · {String(repository.metadata?.language || repository.visibility)}</small></span></div><div className="repo-stats"><span><small>Default branch</small><strong>{repository.defaultBranch || "Not set"}</strong></span><span><small>Visibility</small><strong>{repository.visibility}</strong></span><Status tone={repository.enabled ? "success" : "warning"}>{repository.enabled ? "Enabled" : "Access removed"}</Status></div></button>)}</div> : null}
       </section>
     </>
@@ -1122,6 +1152,7 @@ function ExecutionDiagnosticPage({ navigate }: { navigate: (route: string) => vo
 }
 
 function SettingsPage() {
+  const { t } = useLanguage();
   const [cards, setCards] = useState<Array<[string, string, string]>>([
     ["Source integrations", "Reading SCM health…", "Loading"],
     ["Agent Compose", "Reading runtime health…", "Loading"],
@@ -1157,13 +1188,14 @@ function SettingsPage() {
   }, []);
   return (
     <>
-      <PageHeader eyebrow="Platform administration" title="Settings" description="Integrations, models, runtimes, access, and governance." />
+      <PageHeader eyebrow={t("platformAdministration")} title={t("settings")} description={t("settingsDescription")} />
       <section className="settings-grid">{cards.map(([title, description, state]) => <button className="settings-card" key={title}><span><strong>{title}</strong><small>{description}</small></span><Status tone={state.includes("Warning") || state.includes("Unavailable") ? "warning" : state === "Healthy" ? "success" : "neutral"}>{state}</Status></button>)}</section>
     </>
   );
 }
 
 function IdentityPage({ navigate }: { navigate: (route: string) => void }) {
+  const { language, setLanguage, t } = useLanguage();
   const [mode, setMode] = useState<"login" | "bootstrap">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -1183,19 +1215,19 @@ function IdentityPage({ navigate }: { navigate: (route: string) => void }) {
       if (!response.ok) {
         const result = await response.json().catch(() => ({ error: "request_failed" }));
         setMessage(result.error === "bootstrap_unavailable"
-          ? "An administrator already exists. Sign in instead."
-          : "The credentials could not be accepted.");
+          ? t("administratorAlreadyExists")
+          : t("credentialsRejected"));
         return;
       }
       if (mode === "bootstrap") {
         setMode("login");
         setPassword("");
-        setMessage("Administrator created. Sign in to continue.");
+        setMessage(t("adminCreated"));
         return;
       }
       navigate("/");
     } catch {
-      setMessage("RepoMender API is unavailable. Check the self-hosted stack and try again.");
+      setMessage(t("apiUnavailable"));
     } finally {
       setPending(false);
     }
@@ -1204,40 +1236,41 @@ function IdentityPage({ navigate }: { navigate: (route: string) => void }) {
   return (
     <main className="identity-shell">
       <section className="identity-card">
-        <div className="identity-brand"><i className="brand-mark" /><strong>RepoMender</strong></div>
-        <span className="eyebrow">Enterprise access</span>
-        <h1>{mode === "login" ? "Sign in to your control plane" : "Create the bootstrap administrator"}</h1>
+        <div className="identity-brand"><i className="brand-mark" /><strong>RepoMender</strong><button className="icon-button" onClick={() => setLanguage(language === "zh" ? "en" : "zh")} aria-label={language === "zh" ? t("switchToEnglish") : t("switchToChinese")}>{language === "zh" ? "EN" : "中"}</button></div>
+        <span className="eyebrow">{t("enterpriseAccess")}</span>
+        <h1>{mode === "login" ? t("signInControlPlane") : t("createBootstrapAdmin")}</h1>
         <p>{mode === "login"
-          ? "Use enterprise SSO or the emergency local administrator account."
-          : "This one-time path closes permanently after the first administrator is created."}</p>
+          ? t("localAdminHint")
+          : t("bootstrapHint")}</p>
         <button className="secondary-button oidc-button" onClick={() => window.location.assign("/api/v1/auth/oidc/start")}>
-          Continue with enterprise SSO
+          {t("continueSso")}
         </button>
-        <div className="identity-divider"><span>or use local fallback</span></div>
+        <div className="identity-divider"><span>{t("localFallback")}</span></div>
         <form onSubmit={submit}>
-          <label>Email<input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-          <label>Password<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={12} required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+          <label>{t("email")}<input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+          <label>{t("password")}<input type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={12} required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
           {message ? <div className="identity-message" role="status">{message}</div> : null}
-          <button className="primary-button full-button" disabled={pending}>{pending ? "Please wait…" : mode === "login" ? "Sign in" : "Create administrator"}</button>
+          <button className="primary-button full-button" disabled={pending}>{pending ? t("pleaseWait") : mode === "login" ? t("signIn") : t("createAdministrator")}</button>
         </form>
         <button className="text-button identity-mode" onClick={() => { setMode(mode === "login" ? "bootstrap" : "login"); setMessage(""); }}>
-          {mode === "login" ? "First installation? Create administrator" : "Administrator already exists? Sign in"}
+          {mode === "login" ? t("firstInstallation") : t("administratorExists")}
         </button>
       </section>
       <aside className="identity-context">
-        <span className="eyebrow">Governed engineering automation</span>
-        <h2>Review, diagnose, and repair without surrendering control.</h2>
+        <span className="eyebrow">{t("governedAutomation")}</span>
+        <h2>{t("identityHeadline")}</h2>
         <ul>
-          <li><strong>Isolated execution</strong><span>Agent Compose keeps every task in a governed sandbox.</span></li>
-          <li><strong>Human approval</strong><span>High-impact actions pause before code or permissions change.</span></li>
-          <li><strong>Complete evidence</strong><span>Runs, findings, tests, and decisions remain auditable.</span></li>
+          <li><strong>{t("isolatedExecution")}</strong><span>{t("isolatedExecutionHint")}</span></li>
+          <li><strong>{t("humanApproval")}</strong><span>{t("humanApprovalHint")}</span></li>
+          <li><strong>{t("completeEvidence")}</strong><span>{t("completeEvidenceHint")}</span></li>
         </ul>
       </aside>
     </main>
   );
 }
 
-export function RepoMenderApp() {
+function RepoMenderShell() {
+  const { language, setLanguage, t } = useLanguage();
   const pathname = usePathname();
   const router = useRouter();
   const [theme, setTheme] = useState<"light" | "dark">("light");
@@ -1296,7 +1329,7 @@ export function RepoMenderApp() {
     if (pathname.startsWith("/reviews/")) return <TaskDetailPage id={decodeURIComponent(pathname.slice("/reviews/".length))} navigate={navigate} backRoute="/reviews" />;
 	if (pathname === "/diagnostics") return <TasksPage navigate={navigate} kindFilter="ci_diagnosis" />;
 	if (pathname.startsWith("/diagnostics/")) return <TaskDetailPage id={decodeURIComponent(pathname.slice("/diagnostics/".length))} navigate={navigate} backRoute="/diagnostics" />;
-    if (pathname === "/repairs") return <ListPage type="Issue Repair" title="Issue repairs" description="Governed issue-to-pull-request workflows with human approval." navigate={navigate} />;
+    if (pathname === "/repairs") return <ListPage type="Issue Repair" title={t("issueRepairs")} description="Governed issue-to-pull-request workflows with human approval." navigate={navigate} />;
     if (pathname.startsWith("/repairs/")) return <RepairDetail openDialog={setDialog} />;
     if (pathname === "/approvals") return <ApprovalsPage />;
     if (pathname === "/repositories") return <RepositoriesPage navigate={navigate} />;
@@ -1318,11 +1351,11 @@ export function RepoMenderApp() {
       <aside className={mobileNav ? "sidebar open" : "sidebar"}>
         <button className="brand" onClick={() => navigate("/")} aria-label="RepoMender dashboard"><i className="brand-mark" /><strong>RepoMender</strong></button>
         <button className="organization-switcher"><span className="organization-avatar">AE</span><span><strong>Acme Engineering</strong><small>Payments Platform</small></span><span aria-hidden>⌄</span></button>
-        <nav aria-label="Primary navigation">
+        <nav aria-label={t("primaryNavigation")}>
           {navigation.map((group) => (
-            <div className="nav-group" key={group.label}><div className="nav-label">{group.label}</div>{group.items.map((item) => {
+            <div className="nav-group" key={group.label}><div className="nav-label">{navigationLabel(group.label, t)}</div>{group.items.map((item) => {
               const active = item.route === "/" ? pathname === "/" : pathname.startsWith(item.route);
-              return <button key={item.route} className={active ? "nav-item active" : "nav-item"} onClick={() => navigate(item.route)}><i>{item.glyph}</i><span>{item.label}</span>{item.count ? <b>{item.count}</b> : null}</button>;
+              return <button key={item.route} className={active ? "nav-item active" : "nav-item"} onClick={() => navigate(item.route)}><i>{item.glyph}</i><span>{navigationLabel(item.label, t)}</span>{item.count ? <b>{item.count}</b> : null}</button>;
             })}</div>
           ))}
         </nav>
@@ -1331,11 +1364,11 @@ export function RepoMenderApp() {
       <section className="workspace">
         <header className="topbar">
           <button className="mobile-menu" onClick={() => setMobileNav((open) => !open)} aria-label="Toggle navigation">☰</button>
-          <button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>Search tasks, repositories, PRs, or commands</span><kbd>⌘ K</kbd></button>
-          <div className="topbar-actions"><button className="icon-button" onClick={toggleTheme} aria-label={`Switch to ${theme === "light" ? "dark" : "light"} theme`}>{theme === "light" ? "◐" : "☀"}</button><button className="icon-button" aria-label="Notifications">◇<i className="notification-dot" /></button><button className="user-button" onClick={() => navigate("/login")} aria-label="Open sign-in and account page">LW</button></div>
+          <button className="command-trigger" onClick={() => setCommandOpen(true)}><span>⌕</span><span>{t("searchPlaceholder")}</span><kbd>⌘ K</kbd></button>
+          <div className="topbar-actions"><button className="icon-button" onClick={toggleTheme} aria-label={theme === "light" ? t("switchToDark") : t("switchToLight")}>{theme === "light" ? "◐" : "☀"}</button><button className="icon-button" onClick={() => setLanguage(language === "zh" ? "en" : "zh")} aria-label={language === "zh" ? t("switchToEnglish") : t("switchToChinese")}>{language === "zh" ? "EN" : "中"}</button><button className="icon-button" aria-label={t("notifications")}>◇<i className="notification-dot" /></button><button className="user-button" onClick={() => navigate("/login")} aria-label={t("signIn")}>LW</button></div>
         </header>
         <main>{routeContent()}</main>
-        <nav className="mobile-tabs" aria-label="Mobile navigation"><button className={pathname === "/" ? "active" : ""} onClick={() => navigate("/")}>Overview</button><button className={pathname.startsWith("/reviews") ? "active" : ""} onClick={() => navigate("/reviews")}>Reviews</button><button className={pathname.startsWith("/approvals") ? "active" : ""} onClick={() => navigate("/approvals")}>Approvals</button><button className={pathname.startsWith("/tasks") ? "active" : ""} onClick={() => navigate("/tasks")}>Tasks</button></nav>
+        <nav className="mobile-tabs" aria-label={t("mobileNavigation")}><button className={pathname === "/" ? "active" : ""} onClick={() => navigate("/")}>{t("overview")}</button><button className={pathname.startsWith("/reviews") ? "active" : ""} onClick={() => navigate("/reviews")}>{t("codeReviews")}</button><button className={pathname.startsWith("/approvals") ? "active" : ""} onClick={() => navigate("/approvals")}>{t("approvals")}</button><button className={pathname.startsWith("/tasks") ? "active" : ""} onClick={() => navigate("/tasks")}>{t("task")}</button></nav>
       </section>
       {commandOpen ? <CommandPalette navigate={navigate} onClose={() => setCommandOpen(false)} /> : null}
       {dialog ? <ApprovalDialog dialog={dialog} onClose={() => setDialog(null)} onConfirm={() => { setDialog(null); showToast(`${dialog.action} recorded in the audit log`); }} /> : null}
@@ -1344,7 +1377,32 @@ export function RepoMenderApp() {
   );
 }
 
+function navigationLabel(label: string, t: (key: string) => string): string {
+  const labels: Record<string, string> = {
+    Overview: "overview",
+    Dashboard: "dashboard",
+    "My work": "myWork",
+    Engineering: "engineering",
+    "Code reviews": "codeReviews",
+    "CI diagnostics": "ciDiagnostics",
+    "Issue repairs": "issueRepairs",
+    Approvals: "approvals",
+    Assets: "assets",
+    Repositories: "repositories",
+    Automations: "automations",
+    Platform: "platform",
+    Runs: "runs",
+    Settings: "settings",
+  };
+  return labels[label] ? t(labels[label]) : label;
+}
+
+export function RepoMenderApp() {
+  return <LanguageProvider><RepoMenderShell /></LanguageProvider>;
+}
+
 function CommandPalette({ navigate, onClose }: { navigate: (route: string) => void; onClose: () => void }) {
+  const { t } = useLanguage();
   const [query, setQuery] = useState("");
   const commands = [
     ["Open PR #1842 code review", "/reviews/1842"],
@@ -1358,9 +1416,10 @@ function CommandPalette({ navigate, onClose }: { navigate: (route: string) => vo
     event.preventDefault();
     if (filtered[0]) navigate(filtered[0][1]);
   };
-  return <div className="modal-backdrop" onMouseDown={(event) => event.currentTarget === event.target && onClose()}><section className="command-palette" role="dialog" aria-modal="true" aria-labelledby="command-title"><div className="dialog-heading"><h2 id="command-title">Quick navigation</h2><button className="icon-button" onClick={onClose} aria-label="Close command palette">×</button></div><form onSubmit={submit}><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tasks, repositories, or commands…" aria-label="Search commands" /></form><div className="command-results">{filtered.map(([label, route]) => <button key={route} onClick={() => navigate(route)}><span>{label}</span><kbd>↵</kbd></button>)}</div></section></div>;
+  return <div className="modal-backdrop" onMouseDown={(event) => event.currentTarget === event.target && onClose()}><section className="command-palette" role="dialog" aria-modal="true" aria-labelledby="command-title"><div className="dialog-heading"><h2 id="command-title">{t("quickNavigation")}</h2><button className="icon-button" onClick={onClose} aria-label={t("close")}>×</button></div><form onSubmit={submit}><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("searchShort")} aria-label={t("searchShort")} /></form><div className="command-results">{filtered.map(([label, route]) => <button key={route} onClick={() => navigate(route)}><span>{label}</span><kbd>↵</kbd></button>)}</div></section></div>;
 }
 
 function ApprovalDialog({ dialog, onClose, onConfirm }: { dialog: Exclude<DialogState, null>; onClose: () => void; onConfirm: () => void }) {
-  return <div className="modal-backdrop" onMouseDown={(event) => event.currentTarget === event.target && onClose()}><section className="approval-dialog" role="dialog" aria-modal="true" aria-labelledby="approval-dialog-title"><div className="dialog-heading"><div><span className="eyebrow">Human approval</span><h2 id="approval-dialog-title">{dialog.title}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close approval dialog">×</button></div><div className="dialog-body"><div className="warning-callout"><strong>Requested action</strong><span>{dialog.body}</span></div><dl><div><dt>Repository</dt><dd>payments-api</dd></div><div><dt>Agent</dt><dd>Senior Go Repair</dd></div><div><dt>Estimated cost</dt><dd>$1.84</dd></div></dl></div><div className="dialog-actions"><button className="secondary-button" onClick={onClose}>Request changes</button><button className="danger-button" onClick={onClose}>Reject</button><button className="primary-button" onClick={onConfirm}>{dialog.action}</button></div></section></div>;
+  const { t } = useLanguage();
+  return <div className="modal-backdrop" onMouseDown={(event) => event.currentTarget === event.target && onClose()}><section className="approval-dialog" role="dialog" aria-modal="true" aria-labelledby="approval-dialog-title"><div className="dialog-heading"><div><span className="eyebrow">{t("humanApproval")}</span><h2 id="approval-dialog-title">{dialog.title}</h2></div><button className="icon-button" onClick={onClose} aria-label={t("close")}>×</button></div><div className="dialog-body"><div className="warning-callout"><strong>{t("requestedAction")}</strong><span>{dialog.body}</span></div><dl><div><dt>{t("repository")}</dt><dd>payments-api</dd></div><div><dt>{t("agent")}</dt><dd>Senior Go Repair</dd></div><div><dt>{t("estimatedCost")}</dt><dd>$1.84</dd></div></dl></div><div className="dialog-actions"><button className="secondary-button" onClick={onClose}>{t("requestChanges")}</button><button className="danger-button" onClick={onClose}>{t("reject")}</button><button className="primary-button" onClick={onConfirm}>{dialog.action}</button></div></section></div>;
 }

@@ -33,11 +33,11 @@ test("server-renders the RepoMender dashboard", async () => {
   const html = await response.text();
   assert.match(html, /<title>RepoMender · Review\. Diagnose\. Repair\.<\/title>/i);
   assert.match(html, /RepoMender/);
-  assert.match(html, /What needs your attention/);
-  assert.match(html, /Code reviews/);
-  assert.match(html, /CI diagnostics/);
-  assert.match(html, /Issue repairs/);
-  assert.match(html, /Approval center|Approvals/);
+  assert.match(html, /需要你关注/);
+  assert.match(html, /代码审查/);
+  assert.match(html, /CI 诊断/);
+  assert.match(html, /Issue 修复/);
+  assert.match(html, /审批/);
   assert.doesNotMatch(html, /Your site is taking shape|react-loading-skeleton/);
 });
 
@@ -48,33 +48,37 @@ test("direct product routes preserve the application shell", async () => {
     const html = await response.text();
     assert.match(html, /RepoMender/, pathname);
     if (pathname === "/login") {
-      assert.match(html, /Continue with enterprise SSO/, pathname);
-      assert.match(html, /emergency local administrator/, pathname);
+      assert.match(html, /继续使用企业单点登录/, pathname);
+      assert.match(html, /紧急本地管理员账号/, pathname);
     } else {
-      assert.match(html, /Primary navigation/, pathname);
+      assert.match(html, /主导航|Primary navigation/, pathname);
     }
   }
 });
 
 test("source keeps navigation, approval, and accessibility behaviors wired", async () => {
-  const [app, packageJson] = await Promise.all([
+  const [app, i18n, packageJson] = await Promise.all([
     readFile(new URL("../app/components/RepoMenderApp.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/i18n.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
   assert.match(app, /router\.push\(route\)/);
-  assert.match(app, /aria-label="Primary navigation"/);
+  assert.match(app, /primaryNavigation/);
   assert.match(app, /aria-modal="true"/);
   assert.match(app, /event\.key === "Enter"/);
   assert.match(app, /localStorage\.setItem\("repomender-theme"/);
+  assert.match(i18n, /repomender-language/);
+  assert.match(app, /LanguageProvider/);
+  assert.match(app, /setLanguage\(language === "zh" \? "en" : "zh"\)/);
   assert.match(app, /\/api\/v1\/auth\/\$\{mode\}/);
-  assert.match(app, /Continue with enterprise SSO/);
+  assert.match(app, /continueSso/);
   assert.match(app, /\/api\/v1\/scm\/connections/);
   assert.match(app, /\/api\/v1\/repositories/);
   assert.match(app, /\/api\/v1\/approvals/);
   assert.match(app, /Approval state was not replaced with browser mocks/);
-  assert.match(app, /Install GitHub App/);
-  assert.match(app, /Connect GitLab/);
+  assert.match(app, /installGithubApp/);
+  assert.match(app, /connectGitlab/);
   assert.match(app, /providers\.gitlab \?/);
   assert.match(app, /\/api\/v1\/internal\/executions/);
   assert.match(app, /Agent Compose execution diagnostic/);
