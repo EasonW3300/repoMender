@@ -17,10 +17,13 @@ import (
 	"github.com/EasonW3300/repoMender/server/internal/diagnosis"
 	"github.com/EasonW3300/repoMender/server/internal/execution"
 	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
+	"github.com/EasonW3300/repoMender/server/internal/metrics"
+	"github.com/EasonW3300/repoMender/server/internal/ratelimit"
 	"github.com/EasonW3300/repoMender/server/internal/repair"
 	"github.com/EasonW3300/repoMender/server/internal/review"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
 	"github.com/EasonW3300/repoMender/server/internal/tasks"
+	"github.com/EasonW3300/repoMender/server/internal/telemetry"
 )
 
 // auth supplies identity controls, database constructs PostgreSQL stores, and
@@ -36,19 +39,31 @@ type ReadinessDependency interface {
 }
 
 type Server struct {
-	checker      HealthChecker
-	readiness    []ReadinessDependency
-	auth         *auth.Service
-	oidc         auth.OIDCProvider
-	scm          *scm.Service
-	execution    execution.Adapter
-	tasks        *tasks.Service
-	review       *review.Service
-	diagnosis    *diagnosis.Service
-	approvals    *approvals.Service
-	repair       *repair.Service
-	automations  *automations.Service
-	cookieSecure bool
+	checker        HealthChecker
+	readiness      []ReadinessDependency
+	auth           *auth.Service
+	oidc           auth.OIDCProvider
+	scm            *scm.Service
+	execution      execution.Adapter
+	tasks          *tasks.Service
+	review         *review.Service
+	diagnosis      *diagnosis.Service
+	approvals      *approvals.Service
+	repair         *repair.Service
+	automations    *automations.Service
+	cookieSecure   bool
+	serviceVersion string
+	metrics        *metrics.Registry
+	metricsToken   string
+	rateLimiter    *ratelimit.Limiter
+	telemetry      telemetry.Config
+}
+
+type M10Options struct {
+	ServiceVersion       string
+	MetricsToken         string
+	RateLimitPerMinute   int
+	OTELExporterEndpoint string
 }
 
 func New(checker HealthChecker) *Server {
@@ -196,10 +211,32 @@ func NewWithAutomationServices(
 	return server
 }
 
+// WithM10Hardening attaches observability and traffic controls after the
+// legacy constructor chain has assembled the business services. Keeping this
+// as an opt-in decorator preserves all earlier module test constructors.
+func (s *Server) WithM10Hardening(options M10Options) *Server {
+	if s == nil {
+		return s
+	}
+	s.serviceVersion = options.ServiceVersion
+	s.metrics = metrics.New(options.ServiceVersion)
+	s.metricsToken = options.MetricsToken
+	s.rateLimiter = ratelimit.New(options.RateLimitPerMinute, s.metrics)
+	s.telemetry = telemetry.Config{
+		ServiceName: "repomender-api", Version: options.ServiceVersion,
+		Endpoint: options.OTELExporterEndpoint,
+	}
+	return s
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", s.live)
 	mux.HandleFunc("GET /health/ready", s.ready)
+	if s.metrics != nil {
+		mux.Handle("GET /metrics", s.metrics.Handler(s.metricsToken))
+	}
+	mux.HandleFunc("GET /health/version", s.version)
 	if s.auth != nil {
 		mux.HandleFunc("POST /api/v1/auth/bootstrap", s.bootstrap)
 		mux.HandleFunc("POST /api/v1/auth/login", s.login)
@@ -268,7 +305,13 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /api/v1/automations/{id}/versions", s.automationVersions)
 		mux.HandleFunc("GET /api/v1/automations/{id}/runs", s.automationRuns)
 	}
-	return securityHeaders(mux)
+	var handler http.Handler = mux
+	if s.metrics != nil {
+		handler = s.metrics.Middleware(handler)
+		handler = s.rateLimiter.Middleware(handler)
+		handler = telemetry.Middleware(s.telemetry, handler)
+	}
+	return securityHeaders(handler, s.cookieSecure)
 }
 
 func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
@@ -351,8 +394,8 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 	}
 	server := &http.Server{
 		Addr: cfg.HTTPAddress,
-		Handler: NewWithAutomationServices(db, service, provider, scmService, taskService, reviewService, diagnosisService,
-			approvalService, repairService, automationService, cfg.CookieSecure, readiness...).Handler(),
+		Handler: buildServer(cfg, db, service, provider, scmService, taskService, reviewService, diagnosisService,
+			approvalService, repairService, automationService, readiness...).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -373,6 +416,21 @@ func Run(ctx context.Context, cfg config.Config, db *database.DB) error {
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
 	}
+}
+
+func buildServer(cfg config.Config, db *database.DB, service *auth.Service, provider auth.OIDCProvider,
+	scmService *scm.Service, taskService *tasks.Service, reviewService *review.Service,
+	diagnosisService *diagnosis.Service, approvalService *approvals.Service, repairService *repair.Service,
+	automationService *automations.Service, readiness ...ReadinessDependency) *Server {
+	server := NewWithAutomationServices(db, service, provider, scmService, taskService, reviewService,
+		diagnosisService, approvalService, repairService, automationService, cfg.CookieSecure, readiness...)
+	if cfg.FeatureM10Hardening {
+		server.WithM10Hardening(M10Options{
+			ServiceVersion: cfg.ServiceVersion, MetricsToken: cfg.MetricsToken,
+			RateLimitPerMinute: cfg.RateLimitPerMinute, OTELExporterEndpoint: cfg.OTELExporterEndpoint,
+		})
+	}
+	return server
 }
 
 const (
@@ -536,6 +594,14 @@ func (s *Server) live(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
+	version := s.serviceVersion
+	if version == "" {
+		version = "dev"
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"service": "repomender-api", "version": version})
+}
+
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	if err := s.checker.Ping(r.Context()); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
@@ -559,11 +625,16 @@ func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func securityHeaders(next http.Handler, secureTransport bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if secureTransport || r.TLS != nil {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/EasonW3300/repoMender/server/internal/execution/agentcompose"
 	"github.com/EasonW3300/repoMender/server/internal/httpserver"
 	"github.com/EasonW3300/repoMender/server/internal/repair"
+	"github.com/EasonW3300/repoMender/server/internal/retention"
 	"github.com/EasonW3300/repoMender/server/internal/review"
 	"github.com/EasonW3300/repoMender/server/internal/scm"
 	"github.com/EasonW3300/repoMender/server/internal/tasks"
@@ -25,6 +26,8 @@ import (
 
 // The internal packages separate configuration, persistence, HTTP delivery, and
 // background execution so later business modules can evolve behind stable boundaries.
+
+var buildVersion = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -35,12 +38,23 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: repomender <api|worker|migrate|healthcheck>")
+		return errors.New("usage: repomender <api|worker|migrate|retention|healthcheck|version>")
+	}
+	if args[0] == "version" {
+		version := os.Getenv("REPOMENDER_SERVICE_VERSION")
+		if version == "" || version == "dev" {
+			version = buildVersion
+		}
+		fmt.Println(version)
+		return nil
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
+	}
+	if cfg.ServiceVersion == "dev" && buildVersion != "dev" {
+		cfg.ServiceVersion = buildVersion
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -63,6 +77,9 @@ func run(args []string) error {
 			return fmt.Errorf("migrate database: %w", err)
 		}
 		if cfg.FeatureM4Tasks {
+			if cfg.FeatureM10Hardening {
+				startRetentionLoop(ctx, db, cfg.RetentionDays, cfg.WorkerPoll)
+			}
 			service := tasks.NewService(tasks.NewPostgreSQLStore(db))
 			lease := cfg.WorkerPoll * 3
 			if lease < 5*time.Second {
@@ -120,9 +137,56 @@ func run(args []string) error {
 		return fmt.Errorf("unknown migration direction %q", direction)
 	case "healthcheck":
 		return db.Ping(ctx)
+	case "retention":
+		if !cfg.FeatureM10Hardening {
+			return errors.New("retention requires REPOMENDER_FEATURE_M10_HARDENING=true")
+		}
+		cutoff, err := retention.Cutoff(time.Now(), cfg.RetentionDays)
+		if err != nil {
+			return err
+		}
+		result, err := retention.Prune(ctx, db, cutoff)
+		if err != nil {
+			return fmt.Errorf("prune retention data: %w", err)
+		}
+		slog.Info("retention cleanup complete", "cutoff", cutoff, "run_events", result.RunEvents,
+			"audit_events", result.AuditEvents, "webhook_deliveries", result.WebhookDeliveries,
+			"completed_outbox", result.CompletedOutbox)
+		return nil
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func startRetentionLoop(ctx context.Context, db *database.DB, days int, poll time.Duration) {
+	interval := 24 * time.Hour
+	if poll > interval {
+		interval = poll
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				cutoff, err := retention.Cutoff(now, days)
+				if err != nil {
+					slog.Error("retention cutoff unavailable", "error", err)
+					continue
+				}
+				result, err := retention.Prune(ctx, db, cutoff)
+				if err != nil {
+					slog.Error("retention cleanup failed", "error", err)
+					continue
+				}
+				slog.Info("retention cleanup complete", "cutoff", cutoff, "run_events", result.RunEvents,
+					"audit_events", result.AuditEvents, "webhook_deliveries", result.WebhookDeliveries,
+					"completed_outbox", result.CompletedOutbox)
+			}
+		}
+	}()
 }
 
 func newGitHubService(cfg config.Config, db *database.DB) (*scm.Service, error) {

@@ -76,3 +76,39 @@ func TestReadyReflectsAgentComposeWithoutChangingLiveness(t *testing.T) {
 		t.Fatalf("live status = %d, want %d", liveResponse.Code, http.StatusOK)
 	}
 }
+
+func TestM10HardeningExposesProtectedMetricsAndVersionedSecurityHeaders(t *testing.T) {
+	server := New(fakeChecker{}).WithM10Hardening(M10Options{
+		ServiceVersion: "m10-test", MetricsToken: "metrics-secret", RateLimitPerMinute: 10,
+	})
+	handler := server.Handler()
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("metrics without token status = %d", unauthorized.Code)
+	}
+	authorizedRequest := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	authorizedRequest.Header.Set("Authorization", "Bearer metrics-secret")
+	authorized := httptest.NewRecorder()
+	handler.ServeHTTP(authorized, authorizedRequest)
+	if authorized.Code != http.StatusOK || authorized.Header().Get("Content-Type") == "" {
+		t.Fatalf("metrics status = %d", authorized.Code)
+	}
+	version := httptest.NewRecorder()
+	handler.ServeHTTP(version, httptest.NewRequest(http.MethodGet, "/health/version", nil))
+	if version.Code != http.StatusOK || version.Header().Get("X-Request-ID") == "" {
+		t.Fatalf("version response missing M10 correlation: status=%d", version.Code)
+	}
+	if version.Header().Get("Referrer-Policy") != "no-referrer" || version.Header().Get("Permissions-Policy") == "" {
+		t.Fatal("M10 security headers missing")
+	}
+}
+
+func TestM10SecureTransportAddsHSTS(t *testing.T) {
+	handler := NewWithAuth(fakeChecker{}, nil, nil, true).Handler()
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health/live", nil))
+	if response.Header().Get("Strict-Transport-Security") == "" {
+		t.Fatal("secure transport missing HSTS")
+	}
+}

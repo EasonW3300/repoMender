@@ -1,5 +1,6 @@
 ARG GO_BUILD_IMAGE=golang:1.26-alpine
 ARG ALPINE_IMAGE=alpine:3.22
+ARG REPOMENDER_VERSION=dev
 
 FROM ${GO_BUILD_IMAGE} AS build
 
@@ -7,7 +8,7 @@ WORKDIR /src
 COPY server/ ./
 # Vendored modules keep self-hosted and CI builds reproducible even when the
 # public Go module proxy is unavailable.
-RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags="-s -w" -o /out/repomender ./cmd/repomender
+RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags="-s -w -X main.buildVersion=${REPOMENDER_VERSION}" -o /out/repomender ./cmd/repomender
 
 FROM ${ALPINE_IMAGE}
 

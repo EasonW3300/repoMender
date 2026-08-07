@@ -21,6 +21,9 @@ func TestLoadUsesValidatedDefaults(t *testing.T) {
 	if cfg.FeatureM3ACExecution {
 		t.Fatal("M3 execution must remain hidden until its feature flag is enabled")
 	}
+	if cfg.FeatureM10Hardening || cfg.RetentionDays != 365 || cfg.RateLimitPerMinute != 120 {
+		t.Fatalf("unexpected M10 defaults: %+v", cfg)
+	}
 	if cfg.ACRequestTimeout != 10*time.Second {
 		t.Fatalf("AC request timeout = %s, want 10s", cfg.ACRequestTimeout)
 	}
@@ -231,6 +234,19 @@ func TestLoadM9RequiresTheCompleteBusinessChain(t *testing.T) {
 		return value, ok
 	}); err == nil {
 		t.Fatal("expected M9 to require M2-M8 dependencies")
+	}
+}
+
+func TestLoadM10RequiresM9(t *testing.T) {
+	env := map[string]string{
+		"REPOMENDER_DATABASE_URL":       "postgres://db",
+		"REPOMENDER_FEATURE_M10_HARDENING": "true",
+	}
+	if _, err := load(func(key string) (string, bool) {
+		value, ok := env[key]
+		return value, ok
+	}); err == nil {
+		t.Fatal("expected M10 to require M9 automations")
 	}
 }
 
